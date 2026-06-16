@@ -1,6 +1,8 @@
 // Leave maths — single combined pool (annual + personal/carer's).
 // Defaults match Vic Air spec: 38h week, 20d/yr, accrual cap.
 
+import { isPublicHoliday } from "./holidays.js";
+
 export const DAILY_HOURS = 7.6;
 export const WEEKLY_HOURS = 38;
 export const ENTITLEMENT_DAYS = 20;
@@ -9,8 +11,7 @@ export const HOURS_PER_YEAR = WEEKLY_HOURS * 52;                 // 1976
 // Hours of leave accrued per hour worked (Australian standard 4 weeks / year basis).
 export const ACCRUAL_RATIO = ENTITLEMENT_HOURS / HOURS_PER_YEAR; // ~0.0769
 
-// Count weekdays (Mon–Fri) between two YYYY-MM-DD strings inclusive.
-// TODO Slice 6: subtract Victoria public holidays.
+// Count working weekdays (Mon–Fri excluding Victoria public holidays).
 export function workingDaysBetween(startKey, endKey) {
   if (!startKey || !endKey || endKey < startKey) return 0;
   const [sy, sm, sd] = startKey.split("-").map(Number);
@@ -19,11 +20,31 @@ export function workingDaysBetween(startKey, endKey) {
   const end = Date.UTC(ey, em - 1, ed);
   let count = 0;
   while (cur <= end) {
-    const dow = new Date(cur).getUTCDay(); // 0=Sun, 6=Sat
-    if (dow >= 1 && dow <= 5) count++;
+    const d = new Date(cur);
+    const dow = d.getUTCDay(); // 0=Sun, 6=Sat
+    const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,"0")}-${String(d.getUTCDate()).padStart(2,"0")}`;
+    if (dow >= 1 && dow <= 5 && !isPublicHoliday(key)) count++;
     cur += 86_400_000;
   }
   return count;
+}
+
+// Count Victoria public holidays falling on a weekday in the range.
+export function publicHolidaysInRange(startKey, endKey) {
+  if (!startKey || !endKey || endKey < startKey) return [];
+  const out = [];
+  const [sy, sm, sd] = startKey.split("-").map(Number);
+  const [ey, em, ed] = endKey.split("-").map(Number);
+  let cur = Date.UTC(sy, sm - 1, sd);
+  const end = Date.UTC(ey, em - 1, ed);
+  while (cur <= end) {
+    const d = new Date(cur);
+    const dow = d.getUTCDay();
+    const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,"0")}-${String(d.getUTCDate()).padStart(2,"0")}`;
+    if (dow >= 1 && dow <= 5 && isPublicHoliday(key)) out.push(key);
+    cur += 86_400_000;
+  }
+  return out;
 }
 
 // Total hours of leave requested across a date range, honouring half-day toggles.

@@ -91,6 +91,7 @@
         <span class="lg approved"><span class="swatch"></span>Approved</span>
         <span class="lg denied"><span class="swatch"></span>Denied</span>
         <span class="lg cancelled"><span class="swatch"></span>Cancelled</span>
+        <span class="lg holiday"><span class="swatch"></span>Vic public holiday</span>
       </div>
     </div>
 
@@ -160,6 +161,7 @@
     leaveHoursFor, computeBalance, fmtLeave, ENTITLEMENT_HOURS, DAILY_HOURS
   } from "../assets/leave.js";
   import { renderCalendar } from "../assets/calendar.js";
+  import { holidaysAsCalendarEntries, publicHolidaysInRange, holidayName } from "../assets/holidays.js";
   import {
     collection, query, where, getDocs, addDoc, doc, getDoc, updateDoc, deleteDoc, orderBy, serverTimestamp, Timestamp
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
@@ -386,8 +388,8 @@
     document.getElementById("leaveAccrued").textContent = fmtLeave(accrued);
     document.getElementById("leaveTaken").textContent = fmtLeave(taken);
 
-    // Render leave calendar with all own requests (any status)
-    const calEntries = allRequests.map(r => ({
+    // Render leave calendar with own requests + Victoria public holidays
+    const leaveEntries = allRequests.map(r => ({
       id: r.id,
       startDate: r.startDate,
       endDate: r.endDate,
@@ -398,10 +400,14 @@
            : "Cancelled",
       tooltip: `${r.status.toUpperCase()} · ${fmtLeave(r.hours)}${r.reason ? " · " + r.reason : ""}`
     }));
+    const calEntries = [...holidaysAsCalendarEntries(), ...leaveEntries];
     renderCalendar(document.getElementById("leaveCalendar"), {
       entries: calEntries,
       onClickDay: (dateKey) => openRequestModalForDate(dateKey),
-      onClickEntry: (entry) => openRequestModalForDate(entry.startDate)
+      onClickEntry: (entry) => {
+        if (entry.isHoliday) return; // holidays not actionable
+        openRequestModalForDate(entry.startDate);
+      }
     });
 
     const listEl = document.getElementById("leaveRequestsList");
@@ -487,11 +493,15 @@
       return;
     }
     const hrs = leaveHoursFor(s, e, halfStart.checked, halfEnd.checked);
+    const holidays = publicHolidaysInRange(s, e);
     const balText = document.getElementById("leaveBalance").textContent;
+    const holidayNote = holidays.length
+      ? `<div class="muted" style="font-size:11px; margin-top:4px">${holidays.length} public holiday${holidays.length > 1 ? "s" : ""} in range — not deducted from balance: ${holidays.map(h => `${h} (${holidayName(h)})`).join(", ")}</div>`
+      : "";
     leavePreview.innerHTML = `
       <div><strong>${fmtLeave(hrs)}</strong> requested (${hrs.toFixed(1)} hours, weekdays only)</div>
       <div class="muted" style="font-size:12px; margin-top:4px">Current available balance: ${balText}</div>
-      <div class="muted" style="font-size:11px; margin-top:4px">Public holidays not yet excluded — admin will adjust if needed.</div>
+      ${holidayNote}
     `;
   }
   leaveStart.addEventListener("change", updateLeavePreview);

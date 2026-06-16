@@ -22,6 +22,7 @@
       <span class="lg approved"><span class="swatch"></span>Approved</span>
       <span class="lg denied"><span class="swatch"></span>Denied</span>
       <span class="lg cancelled"><span class="swatch"></span>Cancelled</span>
+      <span class="lg holiday"><span class="swatch"></span>Vic public holiday</span>
     </div>
   </div>
 
@@ -73,6 +74,7 @@
   import { fmtDay, melDateKey } from "../assets/time.js";
   import { computeBalance, fmtLeave } from "../assets/leave.js";
   import { renderCalendar } from "../assets/calendar.js";
+  import { holidaysAsCalendarEntries } from "../assets/holidays.js";
   import {
     collection, query, where, getDocs, doc, updateDoc, serverTimestamp, orderBy
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
@@ -283,9 +285,11 @@
         full: r
       });
     });
+    const allEntries = [...holidaysAsCalendarEntries(), ...entries];
     renderCalendar(document.getElementById("teamCalendar"), {
-      entries,
+      entries: allEntries,
       onClickEntry: (entry) => {
+        if (entry.isHoliday) return;
         if (entry.full.status === "pending") {
           openDecision("approve", entry.id, entry.full);
         } else {
