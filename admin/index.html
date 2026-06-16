@@ -192,14 +192,19 @@
     const todayKey = melDateKey();
 
     const hoursByUid = {};
+    const breakHByUid = {};
     await Promise.all(contractors.map(async (c) => {
       const teSnap = await getDocs(query(collection(db, "timeEntries"), where("uid", "==", c.uid)));
-      let h = 0;
+      let h = 0, bm = 0;
       teSnap.forEach(d => {
         const e = d.data();
-        if (e.date >= monKey && e.date <= todayKey && e.hoursWorked) h += e.hoursWorked;
+        if (e.date >= monKey && e.date <= todayKey) {
+          if (e.hoursWorked) h += e.hoursWorked;
+          if (e.breakMinutes) bm += e.breakMinutes;
+        }
       });
       hoursByUid[c.uid] = h;
+      breakHByUid[c.uid] = bm / 60;
     }));
 
     const total = Object.values(hoursByUid).reduce((s, h) => s + h, 0);
@@ -212,17 +217,22 @@
       type: "bar",
       data: {
         labels: contractors.map(c => (c.name || c.email).split(" ")[0]),
-        datasets: [{
-          label: "Hours worked",
-          data: contractors.map(c => Number((hoursByUid[c.uid] || 0).toFixed(2))),
-          backgroundColor: "#04785799",
-          borderColor: "#047857",
-          borderWidth: 1,
-          borderRadius: 8,
-          maxBarThickness: 60
-        }]
+        datasets: [
+          {
+            label: "Hours worked",
+            data: contractors.map(c => Number((hoursByUid[c.uid] || 0).toFixed(2))),
+            backgroundColor: "#04785799",
+            borderColor: "#047857", borderWidth: 1, borderRadius: 6, maxBarThickness: 36
+          },
+          {
+            label: "Break time",
+            data: contractors.map(c => Number((breakHByUid[c.uid] || 0).toFixed(2))),
+            backgroundColor: "#7C3AED99",
+            borderColor: "#7C3AED", borderWidth: 1, borderRadius: 6, maxBarThickness: 36
+          }
+        ]
       },
-      options: chartOptions("Hours")
+      options: chartOptionsGrouped("Hours")
     });
   }
   loadWeekChart();
@@ -235,25 +245,38 @@
     plugins: {
       legend: { display: false },
       tooltip: {
-        backgroundColor: "#0B1220",
-        padding: 10,
-        cornerRadius: 8,
+        backgroundColor: "#0B1220", padding: 10, cornerRadius: 8,
         titleFont: { family: "Inter", weight: "600" },
         bodyFont: { family: "Inter" },
         callbacks: { label: (ctx) => `${ctx.parsed.y} ${yLabel.toLowerCase()}` }
       }
     },
     scales: {
-      x: {
-        grid: { display: false },
-        ticks: { color: "#64748B", font: { family: "Inter", size: 12 } }
+      x: { grid: { display: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 12 } } },
+      y: { beginAtZero: true, grid: { color: "#E6E8EE", drawBorder: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 12 } }, title: { display: true, text: yLabel, color: "#64748B", font: { family: "Inter", size: 12 } } }
+    }
+  });
+
+  // Grouped variant — multiple datasets (Worked vs Break)
+  window.chartOptionsGrouped = (yLabel) => ({
+    responsive: true, maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        display: true, position: "top", align: "end",
+        labels: {
+          boxWidth: 12, boxHeight: 12, padding: 14, usePointStyle: true,
+          color: "#1F2937", font: { family: "Inter", size: 12, weight: "500" }
+        }
       },
-      y: {
-        beginAtZero: true,
-        grid: { color: "#E6E8EE", drawBorder: false },
-        ticks: { color: "#64748B", font: { family: "Inter", size: 12 } },
-        title: { display: true, text: yLabel, color: "#64748B", font: { family: "Inter", size: 12 } }
+      tooltip: {
+        backgroundColor: "#0B1220", padding: 10, cornerRadius: 8,
+        titleFont: { family: "Inter", weight: "600" }, bodyFont: { family: "Inter" },
+        callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y}h` }
       }
+    },
+    scales: {
+      x: { grid: { display: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 12 } } },
+      y: { beginAtZero: true, grid: { color: "#E6E8EE", drawBorder: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 12 } }, title: { display: true, text: yLabel, color: "#64748B", font: { family: "Inter", size: 12 } } }
     }
   });
 </script>

@@ -148,12 +148,18 @@
   }
 
   let chartRef = null;
-  function chartBase(yLabel) {
+  function chartBase(yLabel, grouped) {
     return {
       responsive: true, maintainAspectRatio: false,
       plugins: {
-        legend: { display: false },
-        tooltip: { backgroundColor: "#0B1220", padding: 10, cornerRadius: 8, titleFont: { family: "Inter", weight: "600" }, bodyFont: { family: "Inter" } }
+        legend: grouped
+          ? { display: true, position: "top", align: "end", labels: { boxWidth: 12, boxHeight: 12, padding: 14, usePointStyle: true, color: "#1F2937", font: { family: "Inter", size: 12, weight: "500" } } }
+          : { display: false },
+        tooltip: {
+          backgroundColor: "#0B1220", padding: 10, cornerRadius: 8,
+          titleFont: { family: "Inter", weight: "600" }, bodyFont: { family: "Inter" },
+          callbacks: grouped ? { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y}h` } : undefined
+        }
       },
       scales: {
         x: { grid: { display: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 11 }, maxTicksLimit: 30 } },
@@ -185,24 +191,37 @@
     document.getElementById("kpiAvg").textContent = daySet.size > 0 ? fmtHours(total / daySet.size) : "—";
     document.getElementById("kpiBreak").textContent = fmtMinutes(breakMins);
 
-    // Chart
+    // Chart (grouped: worked + break per day)
     const ordered = [...keys].reverse();
     const dailyData = {};
-    ordered.forEach(k => dailyData[k] = 0);
-    inRange.forEach(e => { if (e.hoursWorked && dailyData[e.date] !== undefined) dailyData[e.date] += e.hoursWorked; });
+    const breakData = {};
+    ordered.forEach(k => { dailyData[k] = 0; breakData[k] = 0; });
+    inRange.forEach(e => {
+      if (e.hoursWorked && dailyData[e.date] !== undefined) dailyData[e.date] += e.hoursWorked;
+      if (e.breakMinutes && breakData[e.date] !== undefined) breakData[e.date] += e.breakMinutes / 60;
+    });
     if (chartRef) chartRef.destroy();
+    const barW = n > 90 ? 5 : n > 30 ? 10 : 16;
     chartRef = new Chart(document.getElementById("dailyChart"), {
       type: "bar",
       data: {
         labels: ordered.map(k => k.slice(5)),
-        datasets: [{
-          label: "Hours",
-          data: ordered.map(k => Number(dailyData[k].toFixed(2))),
-          backgroundColor: "#04785799",
-          borderColor: "#047857", borderWidth: 1, borderRadius: 5, maxBarThickness: n > 90 ? 6 : n > 30 ? 12 : 22
-        }]
+        datasets: [
+          {
+            label: "Hours worked",
+            data: ordered.map(k => Number(dailyData[k].toFixed(2))),
+            backgroundColor: "#04785799",
+            borderColor: "#047857", borderWidth: 1, borderRadius: 4, maxBarThickness: barW
+          },
+          {
+            label: "Break time",
+            data: ordered.map(k => Number(breakData[k].toFixed(2))),
+            backgroundColor: "#7C3AED99",
+            borderColor: "#7C3AED", borderWidth: 1, borderRadius: 4, maxBarThickness: barW
+          }
+        ]
       },
-      options: chartBase("Hours")
+      options: chartBase("Hours", true)
     });
     document.getElementById("chartMeta").textContent = `${oldestKey} → ${keys[0]}`;
 
