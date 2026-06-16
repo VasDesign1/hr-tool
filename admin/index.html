@@ -11,21 +11,78 @@
 
 <main>
   <div class="card">
-    <h2>Welcome</h2>
-    <p>Signed in as admin. Add your contractors from <strong>Users</strong>, then come back here for the live "who's clocked in" board (coming in Slice 3).</p>
+    <h2>Who's clocked in</h2>
+    <div id="liveList" class="empty">Loading…</div>
   </div>
 
   <div class="card">
     <h2>Quick stats</h2>
-    <div class="placeholder">Active contractors, hours-this-month, pending leave — coming soon.</div>
+    <div class="placeholder">Total hours-this-month and pending leave counts coming with Slice 4.</div>
   </div>
 </main>
 
 <script type="module">
+  import { db } from "../assets/firebase-init.js";
   import { requireRole } from "../assets/auth-router.js";
-  import { renderAdminNav } from "../assets/admin-nav.js";
+  import { renderAdminNav, escapeHtml } from "../assets/admin-nav.js";
+  import { melTimeShort, fmtHours, hoursBetween } from "../assets/time.js";
+  import { collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
   const { profile } = await requireRole("admin");
   renderAdminNav(profile, "dashboard");
+
+  const liveEl = document.getElementById("liveList");
+
+  async function loadLive() {
+    const snap = await getDocs(query(
+      collection(db, "users"),
+      where("role", "==", "contractor"),
+      where("active", "==", true)
+    ));
+    const active = [];
+    snap.forEach(d => {
+      const u = d.data();
+      if (u.currentEntryId && u.clockedInAt) {
+        active.push({ uid: d.id, name: u.name || u.email, start: u.clockedInAt.toDate() });
+      }
+    });
+    if (active.length === 0) {
+      liveEl.classList.add("empty");
+      liveEl.innerHTML = "Nobody is clocked in right now.";
+      return;
+    }
+    liveEl.classList.remove("empty");
+    liveEl.innerHTML = `<div class="live-list">${active.map(a => `
+      <div class="live-row" data-start="${a.start.getTime()}">
+        <div>
+          <div class="name">${escapeHtml(a.name)}</div>
+          <div class="since">since ${melTimeShort(a.start)} Melbourne</div>
+        </div>
+        <div class="elapsed" data-elapsed>—</div>
+      </div>
+    `).join("")}</div>`;
+    tickElapsed();
+  }
+
+  function fmtElapsed(ms) {
+    const totalSec = Math.floor(ms / 1000);
+    const h = String(Math.floor(totalSec / 3600)).padStart(2, "0");
+    const m = String(Math.floor((totalSec % 3600) / 60)).padStart(2, "0");
+    const s = String(totalSec % 60).padStart(2, "0");
+    return `${h}:${m}:${s}`;
+  }
+
+  function tickElapsed() {
+    const now = Date.now();
+    liveEl.querySelectorAll(".live-row").forEach(row => {
+      const start = Number(row.dataset.start);
+      row.querySelector("[data-elapsed]").textContent = fmtElapsed(now - start);
+    });
+  }
+
+  await loadLive();
+  setInterval(tickElapsed, 1000);
+  setInterval(loadLive, 60_000); // refresh list every minute
 </script>
 </body>
 </html>

@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Timesheets — HR Tool Admin</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<header class="topbar"></header>
+
+<main>
+  <div class="card">
+    <div class="toolbar">
+      <h2>Timesheets</h2>
+      <div class="row">
+        <select id="userPick" style="min-width:200px"></select>
+        <select id="rangePick" style="min-width:140px">
+          <option value="7">Last 7 days</option>
+          <option value="14">Last 14 days</option>
+          <option value="30" selected>Last 30 days</option>
+          <option value="60">Last 60 days</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="summary" class="row" style="gap:24px; margin-bottom:16px; color:var(--muted)"></div>
+    <div id="list" class="empty">Pick a contractor to view.</div>
+  </div>
+</main>
+
+<script type="module">
+  import { db } from "../assets/firebase-init.js";
+  import { requireRole } from "../assets/auth-router.js";
+  import { renderAdminNav, escapeHtml } from "../assets/admin-nav.js";
+  import { fmtHours, fmtDay, lastNDateKeys, melTimeShort } from "../assets/time.js";
+  import { collection, query, where, getDocs, orderBy } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+  const { profile } = await requireRole("admin");
+  renderAdminNav(profile, "timesheets");
+
+  const userPick = document.getElementById("userPick");
+  const rangePick = document.getElementById("rangePick");
+  const listEl = document.getElementById("list");
+  const summaryEl = document.getElementById("summary");
+
+  // Populate users
+  const usnap = await getDocs(query(
+    collection(db, "users"),
+    where("role", "==", "contractor")
+  ));
+  const users = [];
+  usnap.forEach(d => users.push({ uid: d.id, ...d.data() }));
+  users.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+  userPick.innerHTML = `<option value="">— select contractor —</option>` +
+    users.map(u => `<option value="${u.uid}">${escapeHtml(u.name || u.email)}</option>`).join("");
+
+  async function load() {
+    const uid = userPick.value;
+    if (!uid) {
+      listEl.classList.add("empty");
+      listEl.innerHTML = "Pick a contractor to view.";
+      summaryEl.innerHTML = "";
+      return;
+    }
+    const n = Number(rangePick.value);
+    const keys = lastNDateKeys(n);
+    const oldestKey = keys[keys.length - 1];
+
+    listEl.classList.remove("empty");
+    listEl.innerHTML = `<div class="empty">Loading…</div>`;
+
+    const snap = await getDocs(query(
+      collection(db, "timeEntries"),
+      where("uid", "==", uid),
+      where("date", ">=", oldestKey),
+      orderBy("date", "desc")
+    ));
+
+    // Group by day
+    const byDay = {};
+    keys.forEach(k => byDay[k] = { hours: 0, entries: [] });
+    snap.forEach(d => {
+      const e = d.data();
+      if (!byDay[e.date]) return;
+      byDay[e.date].entries.push(e);
+      if (e.hoursWorked) byDay[e.date].hours += e.hoursWorked;
+    });
+
+    const totalHours = keys.reduce((s, k) => s + byDay[k].hours, 0);
+    const daysWorked = keys.filter(k => byDay[k].hours > 0).length;
+    summaryEl.innerHTML = `
+      <div><div style="font-size:11px; text-transform:uppercase; letter-spacing:.06em">Total</div><div style="font-size:20px; color:var(--text); font-weight:700">${fmtHours(totalHours)}</div></div>
+      <div><div style="font-size:11px; text-transform:uppercase; letter-spacing:.06em">Days worked</div><div style="font-size:20px; color:var(--text); font-weight:700">${daysWorked}</div></div>
+      <div><div style="font-size:11px; text-transform:uppercase; letter-spacing:.06em">Avg / worked day</div><div style="font-size:20px; color:var(--text); font-weight:700">${daysWorked > 0 ? fmtHours(totalHours / daysWorked) : "—"}</div></div>
+    `;
+
+    listEl.innerHTML = `
+      <table class="data">
+        <thead>
+          <tr><th>Date</th><th>Sessions</th><th style="text-align:right">Hours</th></tr>
+        </thead>
+        <tbody>
+          ${keys.map(k => {
+            const d = byDay[k];
+            const sessions = d.entries.map(e => {
+              const start = e.clockInUTC.toDate();
+              const end = e.clockOutUTC ? e.clockOutUTC.toDate() : null;
+              return `${melTimeShort(start)}–${end ? melTimeShort(end) : "still in"}`;
+            }).join(" · ");
+            return `
+              <tr>
+                <td>${fmtDay(k)}</td>
+                <td class="muted" style="font-size:13px">${sessions || "—"}</td>
+                <td style="text-align:right; font-variant-numeric: tabular-nums">${d.hours > 0 ? fmtHours(d.hours) : "—"}</td>
+              </tr>
+            `;
+          }).join("")}
+        </tbody>
+      </table>
+    `;
+  }
+
+  userPick.addEventListener("change", load);
+  rangePick.addEventListener("change", load);
+</script>
+</body>
+</html>

@@ -3,8 +3,9 @@ import { logout } from "./auth-router.js";
 
 export function renderAdminNav(profile, currentPage) {
   const pages = [
-    { id: "dashboard", label: "Dashboard", href: "index.html" },
-    { id: "users",     label: "Users",     href: "users.html"  },
+    { id: "dashboard",  label: "Dashboard",  href: "index.html"     },
+    { id: "users",      label: "Users",      href: "users.html"     },
+    { id: "timesheets", label: "Timesheets", href: "timesheets.html"},
   ];
 
   const linksHtml = pages.map(p => {

@@ -17,45 +17,219 @@
 
 <main>
   <div class="card">
-    <h2>Today</h2>
-    <div class="row" style="justify-content:space-between">
-      <div>
-        <div class="muted" style="font-size:12px">Melbourne</div>
-        <div class="big-clock" id="melTime">—</div>
+    <div class="clock-panel">
+      <div class="clock-block">
+        <div class="lbl">Melbourne</div>
+        <div class="val" id="melTime">—</div>
       </div>
-      <div>
-        <div class="muted" style="font-size:12px">Your local</div>
-        <div class="big-clock" id="localTime">—</div>
+      <div class="clock-block">
+        <div class="lbl">Your local</div>
+        <div class="val" id="localTime">—</div>
       </div>
     </div>
-    <div class="placeholder" style="margin-top:18px">Clock In / Clock Out — coming next slice.</div>
+
+    <button id="shiftBtn" class="shift-btn in" disabled>Loading…</button>
+
+    <div class="shift-status" id="shiftStatus" style="display:none">
+      <div>Clocked in at <span id="shiftStart">—</span> <span class="muted" style="font-size:12px">Melbourne</span></div>
+      <div class="running">⏱ <span id="shiftRunning">00:00:00</span></div>
+    </div>
   </div>
 
   <div class="card">
-    <h2>Coming soon</h2>
-    <ul class="muted" style="line-height:1.7">
-      <li>Clock In / Clock Out + today's hours</li>
-      <li>Timesheet (week / month)</li>
-      <li>Leave balance + request form</li>
-      <li>Payslips</li>
-    </ul>
+    <h2>Today</h2>
+    <div class="row" style="justify-content:space-between">
+      <div>
+        <div class="muted" style="font-size:12px">Hours so far</div>
+        <div style="font-size:26px; font-weight:700" id="todayHours">—</div>
+      </div>
+      <div>
+        <div class="muted" style="font-size:12px">Target</div>
+        <div style="font-size:26px; font-weight:700; color:var(--muted)">7h 36m</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Last 7 days</h2>
+    <div id="recentList" class="empty">Loading…</div>
   </div>
 </main>
 
 <script type="module">
+  import { auth, db } from "../assets/firebase-init.js";
   import { requireRole, logout } from "../assets/auth-router.js";
-  const { profile } = await requireRole("contractor");
-  document.getElementById("who").textContent = profile.name || profile.email || "Contractor";
+  import { melClock, localClock, melDateKey, melTimeShort, fmtHours, hoursBetween, fmtDay, lastNDateKeys } from "../assets/time.js";
+  import {
+    collection, query, where, getDocs, addDoc, doc, getDoc, updateDoc, orderBy, serverTimestamp, Timestamp
+  } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+  const { user, profile } = await requireRole("contractor");
+  document.getElementById("who").textContent = profile.name || profile.email || "";
   document.getElementById("logoutBtn").addEventListener("click", logout);
 
-  function tick() {
+  const shiftBtn    = document.getElementById("shiftBtn");
+  const shiftStatus = document.getElementById("shiftStatus");
+  const shiftStart  = document.getElementById("shiftStart");
+  const shiftRun    = document.getElementById("shiftRunning");
+  const todayHrsEl  = document.getElementById("todayHours");
+
+  let currentEntryId = profile.currentEntryId || null;
+  let currentStartMs = null;
+
+  // ---- Real-time clocks ----
+  function tickClocks() {
     const now = new Date();
-    document.getElementById("melTime").textContent =
-      now.toLocaleTimeString("en-AU", { timeZone: "Australia/Melbourne", hour12: false });
-    document.getElementById("localTime").textContent =
-      now.toLocaleTimeString([], { hour12: false });
+    document.getElementById("melTime").textContent = melClock(now);
+    document.getElementById("localTime").textContent = localClock(now);
+    if (currentEntryId && currentStartMs) {
+      const elapsed = now.getTime() - currentStartMs;
+      shiftRun.textContent = fmtElapsed(elapsed);
+      todayHrsEl.textContent = fmtHours(todayHoursClosed + elapsed / 3_600_000);
+    }
   }
-  tick(); setInterval(tick, 1000);
+  function fmtElapsed(ms) {
+    const totalSec = Math.floor(ms / 1000);
+    const h = String(Math.floor(totalSec / 3600)).padStart(2, "0");
+    const m = String(Math.floor((totalSec % 3600) / 60)).padStart(2, "0");
+    const s = String(totalSec % 60).padStart(2, "0");
+    return `${h}:${m}:${s}`;
+  }
+
+  // ---- Today's closed-shift hours (computed once on load + after each clock-out) ----
+  let todayHoursClosed = 0;
+  async function refreshToday() {
+    const todayKey = melDateKey();
+    const snap = await getDocs(query(
+      collection(db, "timeEntries"),
+      where("uid", "==", user.uid),
+      where("date", "==", todayKey)
+    ));
+    todayHoursClosed = 0;
+    let openEntry = null;
+    snap.forEach(d => {
+      const e = d.data();
+      if (e.clockOutUTC) {
+        todayHoursClosed += e.hoursWorked || 0;
+      } else {
+        openEntry = { id: d.id, ...e };
+      }
+    });
+    if (!currentEntryId) {
+      todayHrsEl.textContent = fmtHours(todayHoursClosed);
+    }
+    return openEntry;
+  }
+
+  // ---- Render shift state ----
+  function renderShiftState() {
+    if (currentEntryId) {
+      shiftBtn.className = "shift-btn out";
+      shiftBtn.textContent = "Clock Out";
+      shiftStatus.style.display = "flex";
+    } else {
+      shiftBtn.className = "shift-btn in";
+      shiftBtn.textContent = "Clock In";
+      shiftStatus.style.display = "none";
+    }
+    shiftBtn.disabled = false;
+  }
+
+  // ---- Clock In / Clock Out ----
+  shiftBtn.addEventListener("click", async () => {
+    shiftBtn.disabled = true;
+    shiftBtn.textContent = "Working…";
+    try {
+      if (!currentEntryId) {
+        // Clock In
+        const now = new Date();
+        const entryRef = await addDoc(collection(db, "timeEntries"), {
+          uid: user.uid,
+          date: melDateKey(now),
+          clockInUTC: Timestamp.fromDate(now),
+          clockOutUTC: null,
+          hoursWorked: null,
+          source: "user",
+          createdAt: serverTimestamp()
+        });
+        await updateDoc(doc(db, "users", user.uid), {
+          currentEntryId: entryRef.id,
+          clockedInAt: Timestamp.fromDate(now)
+        });
+        currentEntryId = entryRef.id;
+        currentStartMs = now.getTime();
+        shiftStart.textContent = melTimeShort(now);
+      } else {
+        // Clock Out
+        const now = new Date();
+        const startMs = currentStartMs;
+        const hours = hoursBetween(startMs, now.getTime());
+        await updateDoc(doc(db, "timeEntries", currentEntryId), {
+          clockOutUTC: Timestamp.fromDate(now),
+          hoursWorked: hours
+        });
+        await updateDoc(doc(db, "users", user.uid), {
+          currentEntryId: null,
+          clockedInAt: null
+        });
+        currentEntryId = null;
+        currentStartMs = null;
+        await refreshToday();
+        await refreshRecent();
+      }
+      renderShiftState();
+    } catch (ex) {
+      alert("Failed: " + (ex.message || ex.code));
+      shiftBtn.disabled = false;
+      renderShiftState();
+    }
+  });
+
+  // ---- Recent 7 days ----
+  async function refreshRecent() {
+    const listEl = document.getElementById("recentList");
+    const keys = lastNDateKeys(7);
+    const oldestKey = keys[keys.length - 1];
+    const snap = await getDocs(query(
+      collection(db, "timeEntries"),
+      where("uid", "==", user.uid),
+      where("date", ">=", oldestKey),
+      orderBy("date", "desc")
+    ));
+    const byDay = {};
+    keys.forEach(k => byDay[k] = 0);
+    snap.forEach(d => {
+      const e = d.data();
+      if (e.hoursWorked && byDay[e.date] !== undefined) byDay[e.date] += e.hoursWorked;
+    });
+    listEl.classList.remove("empty");
+    listEl.innerHTML = keys.map(k => `
+      <div class="day-row">
+        <span class="day-label">${fmtDay(k)}</span>
+        <span class="day-hours">${byDay[k] > 0 ? fmtHours(byDay[k]) : "—"}</span>
+      </div>
+    `).join("");
+  }
+
+  // ---- Initial load ----
+  // Trust profile.currentEntryId; if set, fetch its start time.
+  if (currentEntryId) {
+    const eSnap = await getDoc(doc(db, "timeEntries", currentEntryId));
+    if (eSnap.exists() && !eSnap.data().clockOutUTC) {
+      currentStartMs = eSnap.data().clockInUTC.toDate().getTime();
+      shiftStart.textContent = melTimeShort(eSnap.data().clockInUTC.toDate());
+    } else {
+      // Stale pointer (e.g. admin closed the shift) — clear it
+      currentEntryId = null;
+      currentStartMs = null;
+      await updateDoc(doc(db, "users", user.uid), { currentEntryId: null, clockedInAt: null });
+    }
+  }
+  await refreshToday();
+  await refreshRecent();
+  renderShiftState();
+  tickClocks();
+  setInterval(tickClocks, 1000);
 </script>
 </body>
 </html>

@@ -18,23 +18,34 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
-    // Users — admin manages all; user can update own mustChangePassword flag only.
+    // Fields a contractor is allowed to self-update on their own profile.
+    function userSelfEditableKeys() {
+      return ['mustChangePassword', 'updatedAt', 'currentEntryId', 'clockedInAt'];
+    }
+
     match /users/{uid} {
       allow read:   if isSelf(uid) || isAdmin();
       allow create: if isAdmin();
       allow update: if isAdmin()
                     || (isSelf(uid)
                         && request.resource.data.diff(resource.data).affectedKeys()
-                             .hasOnly(['mustChangePassword', 'updatedAt']));
+                             .hasOnly(userSelfEditableKeys()));
       allow delete: if isAdmin();
     }
 
     // Time entries — user writes own, admin can edit anything.
     match /timeEntries/{id} {
       allow read:   if signedIn() && (isAdmin() || resource.data.uid == request.auth.uid);
-      allow create: if signedIn() && (isAdmin() || request.resource.data.uid == request.auth.uid);
-      allow update, delete: if isAdmin()
-                            || (signedIn() && resource.data.uid == request.auth.uid && resource.data.editable == true);
+      allow list:   if signedIn();
+      allow create: if signedIn()
+                    && (isAdmin()
+                        || (request.resource.data.uid == request.auth.uid
+                            && request.resource.data.source == 'user'));
+      allow update: if isAdmin()
+                    || (signedIn()
+                        && resource.data.uid == request.auth.uid
+                        && resource.data.source == 'user');
+      allow delete: if isAdmin();
     }
 
     // Leave requests — user submits own; admin approves/denies.
