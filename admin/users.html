@@ -19,22 +19,13 @@
       <div class="empty">Loading…</div>
     </div>
   </div>
-
-  <div class="card">
-    <div class="toolbar">
-      <h2>Pending invites</h2>
-    </div>
-    <div id="invitesContainer">
-      <div class="empty">Loading…</div>
-    </div>
-  </div>
 </main>
 
 <!-- Add user modal -->
 <div class="modal-backdrop" id="addModal">
   <div class="modal">
-    <h2>Invite a contractor</h2>
-    <p class="muted" style="margin-top:-6px">They'll receive an email to set their password and complete signup.</p>
+    <h2>Add a contractor</h2>
+    <p class="muted" style="margin-top:-6px">You'll be shown a temporary password — send it to the contractor however you normally communicate (Slack, WhatsApp, etc.). They'll be forced to change it the first time they log in.</p>
     <form id="addForm">
       <label>Full name</label>
       <input type="text" id="newName" required autocomplete="off">
@@ -43,9 +34,26 @@
       <div class="error" id="addErr"></div>
       <div class="actions">
         <button type="button" class="ghost" id="cancelBtn">Cancel</button>
-        <button type="submit" id="sendBtn">Send invite</button>
+        <button type="submit" id="createBtn">Create user</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- Show temp password modal -->
+<div class="modal-backdrop" id="tempPassModal">
+  <div class="modal">
+    <h2>User created ✓</h2>
+    <p>Send these credentials to the contractor:</p>
+    <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:14px; font-family:monospace; font-size:14px; margin:14px 0">
+      <div><span class="muted">Email:</span> <span id="tpEmail"></span></div>
+      <div style="margin-top:6px"><span class="muted">Password:</span> <span id="tpPass"></span></div>
+    </div>
+    <p class="muted" style="font-size:12px">They'll be prompted to set their own password the first time they sign in. This temporary one will stop working at that point.</p>
+    <div class="actions">
+      <button type="button" id="copyBtn" class="ghost">Copy</button>
+      <button type="button" id="tpDoneBtn">Done</button>
+    </div>
   </div>
 </div>
 
@@ -72,9 +80,9 @@
   import { auth, db } from "../assets/firebase-init.js";
   import { requireRole } from "../assets/auth-router.js";
   import { renderAdminNav, escapeHtml } from "../assets/admin-nav.js";
+  import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
   import {
-    sendSignInLinkToEmail,
-    sendPasswordResetEmail
+    getAuth, createUserWithEmailAndPassword, signOut, sendPasswordResetEmail
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
   import {
     collection, query, where, getDocs, doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp
@@ -83,23 +91,33 @@
   const { profile } = await requireRole("admin");
   renderAdminNav(profile, "users");
 
-  const INVITE_LANDING = location.origin + location.pathname.replace(/admin\/users\.html$/, "invite.html");
+  // ---- Helpers ----
+  function generateTempPassword() {
+    // 12 chars, no ambiguous (no I l O 0 1)
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+    let out = "";
+    const buf = new Uint32Array(12);
+    crypto.getRandomValues(buf);
+    for (let i = 0; i < 12; i++) out += chars[buf[i] % chars.length];
+    return out;
+  }
 
-  // ---- Load lists ----
   async function loadUsers() {
     const listEl = document.getElementById("listContainer");
     listEl.innerHTML = `<div class="empty">Loading…</div>`;
     const snap = await getDocs(query(collection(db, "users"), where("role", "==", "contractor")));
     if (snap.empty) {
-      listEl.innerHTML = `<div class="empty">No contractors yet. Click <strong>+ Add user</strong> to invite one.</div>`;
+      listEl.innerHTML = `<div class="empty">No contractors yet. Click <strong>+ Add user</strong> to add one.</div>`;
       return;
     }
     const rows = [];
     snap.forEach(d => {
       const u = d.data();
-      const status = u.active
-        ? `<span class="badge ok">Active</span>`
-        : `<span class="badge off">Deactivated</span>`;
+      const status = !u.active
+        ? `<span class="badge off">Deactivated</span>`
+        : u.mustChangePassword
+          ? `<span class="badge pending">Awaiting first login</span>`
+          : `<span class="badge ok">Active</span>`;
       rows.push(`
         <tr>
           <td>${escapeHtml(u.name || "—")}</td>
@@ -124,48 +142,10 @@
       </table>
     `;
     listEl.querySelectorAll("button[data-act]").forEach(btn => {
-      btn.addEventListener("click", (e) => handleUserAction(btn.dataset.act, btn.dataset));
+      btn.addEventListener("click", () => handleUserAction(btn.dataset.act, btn.dataset));
     });
   }
 
-  async function loadInvites() {
-    const listEl = document.getElementById("invitesContainer");
-    listEl.innerHTML = `<div class="empty">Loading…</div>`;
-    const snap = await getDocs(collection(db, "invites"));
-    if (snap.empty) {
-      listEl.innerHTML = `<div class="empty">No pending invites.</div>`;
-      return;
-    }
-    const rows = [];
-    snap.forEach(d => {
-      const inv = d.data();
-      const sent = inv.createdAt?.toDate?.()?.toLocaleString("en-AU", { timeZone: "Australia/Melbourne" }) || "—";
-      rows.push(`
-        <tr>
-          <td>${escapeHtml(inv.name || "—")}</td>
-          <td>${escapeHtml(inv.email)}</td>
-          <td>${sent}</td>
-          <td>
-            <div class="actions">
-              <button class="ghost" data-act="resend" data-email="${escapeHtml(inv.email)}">Resend</button>
-              <button class="ghost" data-act="cancel-invite" data-email="${escapeHtml(inv.email)}">Cancel</button>
-            </div>
-          </td>
-        </tr>
-      `);
-    });
-    listEl.innerHTML = `
-      <table class="data">
-        <thead><tr><th>Name</th><th>Email</th><th>Sent</th><th></th></tr></thead>
-        <tbody>${rows.join("")}</tbody>
-      </table>
-    `;
-    listEl.querySelectorAll("button[data-act]").forEach(btn => {
-      btn.addEventListener("click", (e) => handleInviteAction(btn.dataset.act, btn.dataset));
-    });
-  }
-
-  // ---- Actions ----
   async function handleUserAction(act, data) {
     if (act === "edit") {
       const snap = await getDoc(doc(db, "users", data.uid));
@@ -176,13 +156,13 @@
       document.getElementById("editErr").textContent = "";
       document.getElementById("editModal").classList.add("open");
     } else if (act === "reset") {
-      if (!confirm(`Send password reset email to ${data.email}?`)) return;
+      if (!confirm(`Send password reset email to ${data.email}?\n\nNote: vicair.com.au mail may strip the reset link. If it does, deactivate and re-add the user instead.`)) return;
       try {
         await sendPasswordResetEmail(auth, data.email);
         alert("Reset email sent.");
       } catch (e) { alert("Failed: " + e.message); }
     } else if (act === "deactivate") {
-      if (!confirm("Deactivate this user? They will be signed out and blocked from signing in until reactivated.")) return;
+      if (!confirm("Deactivate this user? They'll be blocked from signing in until reactivated.")) return;
       await updateDoc(doc(db, "users", data.uid), { active: false });
       loadUsers();
     } else if (act === "activate") {
@@ -191,23 +171,7 @@
     }
   }
 
-  async function handleInviteAction(act, data) {
-    if (act === "resend") {
-      try {
-        await sendSignInLinkToEmail(auth, data.email, {
-          url: INVITE_LANDING + "?email=" + encodeURIComponent(data.email),
-          handleCodeInApp: true
-        });
-        alert("Invite re-sent.");
-      } catch (e) { alert("Failed: " + e.message); }
-    } else if (act === "cancel-invite") {
-      if (!confirm("Cancel this invite?")) return;
-      await deleteDoc(doc(db, "invites", data.email));
-      loadInvites();
-    }
-  }
-
-  // ---- Add user modal ----
+  // ---- Add user (with secondary Firebase app so admin stays signed in) ----
   document.getElementById("addBtn").addEventListener("click", () => {
     document.getElementById("addForm").reset();
     document.getElementById("addErr").textContent = "";
@@ -225,26 +189,55 @@
     const name = document.getElementById("newName").value.trim();
     const email = document.getElementById("newEmail").value.trim().toLowerCase();
     const errEl = document.getElementById("addErr");
-    const sendBtn = document.getElementById("sendBtn");
+    const createBtn = document.getElementById("createBtn");
     errEl.textContent = "";
-    sendBtn.disabled = true; sendBtn.textContent = "Sending…";
+    createBtn.disabled = true; createBtn.textContent = "Creating…";
+
+    const tempPass = generateTempPassword();
+    let tempApp;
     try {
-      // Create invite doc first (admin allowed)
-      await setDoc(doc(db, "invites", email), {
-        email, name, role: "contractor", createdAt: serverTimestamp(), invitedBy: profile.email
+      // Secondary app instance so admin's main session is untouched
+      tempApp = initializeApp(auth.app.options, "userCreator-" + Date.now());
+      const tempAuth = getAuth(tempApp);
+      const cred = await createUserWithEmailAndPassword(tempAuth, email, tempPass);
+      const newUid = cred.user.uid;
+      await signOut(tempAuth);
+
+      // Now write the profile doc using admin's main auth
+      await setDoc(doc(db, "users", newUid), {
+        email,
+        name,
+        role: "contractor",
+        active: true,
+        mustChangePassword: true,
+        startDate: new Date().toISOString().slice(0, 10),
+        createdAt: serverTimestamp(),
+        createdBy: profile.email
       });
-      // Send email link
-      await sendSignInLinkToEmail(auth, email, {
-        url: INVITE_LANDING + "?email=" + encodeURIComponent(email),
-        handleCodeInApp: true
-      });
+
       document.getElementById("addModal").classList.remove("open");
-      await loadInvites();
+      document.getElementById("tpEmail").textContent = email;
+      document.getElementById("tpPass").textContent = tempPass;
+      document.getElementById("tempPassModal").classList.add("open");
+      loadUsers();
     } catch (ex) {
       errEl.textContent = "Failed: " + (ex.message || ex.code);
     } finally {
-      sendBtn.disabled = false; sendBtn.textContent = "Send invite";
+      createBtn.disabled = false; createBtn.textContent = "Create user";
+      if (tempApp) { try { await deleteApp(tempApp); } catch {} }
     }
+  });
+
+  document.getElementById("copyBtn").addEventListener("click", async () => {
+    const text = `Email: ${document.getElementById("tpEmail").textContent}\nPassword: ${document.getElementById("tpPass").textContent}\nSign in at: https://vasdesign1.github.io/hr-tool/`;
+    try {
+      await navigator.clipboard.writeText(text);
+      document.getElementById("copyBtn").textContent = "Copied ✓";
+      setTimeout(() => document.getElementById("copyBtn").textContent = "Copy", 1500);
+    } catch { alert(text); }
+  });
+  document.getElementById("tpDoneBtn").addEventListener("click", () => {
+    document.getElementById("tempPassModal").classList.remove("open");
   });
 
   document.getElementById("editForm").addEventListener("submit", async (e) => {
@@ -261,7 +254,6 @@
   });
 
   loadUsers();
-  loadInvites();
 </script>
 </body>
 </html>

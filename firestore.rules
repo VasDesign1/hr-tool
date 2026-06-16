@@ -18,33 +18,14 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
-    function inviteExistsFor(email) {
-      return exists(/databases/$(db)/documents/invites/$(email));
-    }
-
-    function inviteFor(email) {
-      return get(/databases/$(db)/documents/invites/$(email)).data;
-    }
-
-    // Invites — admin creates, invitee reads/deletes their own.
-    match /invites/{email} {
-      allow read:   if isAdmin()
-                    || (signedIn() && request.auth.token.email == email);
-      allow create, update: if isAdmin();
-      allow delete: if isAdmin()
-                    || (signedIn() && request.auth.token.email == email);
-    }
-
-    // Users — admin manages all; contractors self-create on invite acceptance.
+    // Users — admin manages all; user can update own mustChangePassword flag only.
     match /users/{uid} {
       allow read:   if isSelf(uid) || isAdmin();
-      allow create: if isAdmin()
+      allow create: if isAdmin();
+      allow update: if isAdmin()
                     || (isSelf(uid)
-                        && request.resource.data.email == request.auth.token.email
-                        && request.resource.data.role == 'contractor'
-                        && inviteExistsFor(request.auth.token.email)
-                        && request.resource.data.name == inviteFor(request.auth.token.email).name);
-      allow update: if isAdmin();
+                        && request.resource.data.diff(resource.data).affectedKeys()
+                             .hasOnly(['mustChangePassword', 'updatedAt']));
       allow delete: if isAdmin();
     }
 

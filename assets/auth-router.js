@@ -31,6 +31,10 @@ export async function requireRole(expected) {
         location.replace(pathTo("login.html"));
         return;
       }
+      if (profile.mustChangePassword && !location.pathname.endsWith("set-password.html")) {
+        location.replace(pathTo("set-password.html"));
+        return;
+      }
       if (expected && profile.role !== expected) {
         const target = profile.role === "admin" ? "admin/index.html" : "app/index.html";
         location.replace(pathTo(target));
