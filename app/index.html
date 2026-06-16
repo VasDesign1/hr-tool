@@ -235,7 +235,21 @@
     shiftBtn.disabled = false;
   }
 
+  // Working-window check (Melbourne 08:30–16:30)
+  function outsideWorkingWindow() {
+    const melTimeStr = new Date().toLocaleTimeString("en-AU", {
+      timeZone: "Australia/Melbourne", hour12: false, hour: "2-digit", minute: "2-digit"
+    });
+    const [h, m] = melTimeStr.split(":").map(Number);
+    const minutes = h * 60 + m;
+    return minutes < (8 * 60 + 30) || minutes > (16 * 60 + 30);
+  }
+
   shiftBtn.addEventListener("click", async () => {
+    if (!currentEntryId && outsideWorkingWindow()) {
+      const ok = confirm("Clock in outside the 08:30–16:30 Melbourne window?\n\nIt'll still be logged, but admin will see it flagged.");
+      if (!ok) return;
+    }
     shiftBtn.disabled = true;
     shiftBtn.textContent = "Working…";
     try {

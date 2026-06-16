@@ -76,7 +76,7 @@
   import { renderCalendar } from "../assets/calendar.js";
   import { holidaysAsCalendarEntries } from "../assets/holidays.js";
   import {
-    collection, query, where, getDocs, doc, updateDoc, serverTimestamp, orderBy
+    collection, query, where, getDocs, doc, updateDoc, serverTimestamp, orderBy, onSnapshot
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const { profile } = await requireRole("admin");
@@ -87,14 +87,16 @@
   const usersByUid = {};
   usnap.forEach(d => usersByUid[d.id] = { uid: d.id, ...d.data() });
 
-  // ---- Pending queue ----
-  async function loadPending() {
+  // ---- Pending queue (live) ----
+  function startPendingLive() {
+    onSnapshot(
+      query(collection(db, "leaveRequests"), where("status", "==", "pending")),
+      (snap) => renderPending(snap),
+      (err) => console.error("pending:", err)
+    );
+  }
+  function renderPending(snap) {
     const listEl = document.getElementById("pendingList");
-    listEl.innerHTML = `<div class="empty">Loading…</div>`;
-    const snap = await getDocs(query(
-      collection(db, "leaveRequests"),
-      where("status", "==", "pending")
-    ));
     const reqs = [];
     snap.forEach(d => reqs.push({ id: d.id, ...d.data() }));
     reqs.sort((a, b) => (a.submittedAt?.toMillis?.() || 0) - (b.submittedAt?.toMillis?.() || 0));
@@ -176,7 +178,7 @@
         decidedAt: serverTimestamp()
       });
       document.getElementById("decisionModal").classList.remove("open");
-      loadPending();
+      // pending list updates via onSnapshot automatically
       loadUpcoming();
       loadBalances();
       loadCalendar();
@@ -300,7 +302,7 @@
   }
 
   loadCalendar();
-  loadPending();
+  startPendingLive();
   loadUpcoming();
   loadBalances();
 </script>
