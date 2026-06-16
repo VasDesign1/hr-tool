@@ -68,12 +68,6 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // Pay periods — admin-managed; user reads own.
-    match /payPeriods/{id} {
-      allow read: if signedIn() && (isAdmin() || resource.data.uid == request.auth.uid);
-      allow write: if isAdmin();
-    }
-
     // Global settings — everyone signed in can read; only admin writes.
     match /settings/{doc} {
       allow read: if signedIn();
