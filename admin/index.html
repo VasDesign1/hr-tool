@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../assets/styles.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
 </head>
 <body>
 <header class="topbar"></header>
@@ -20,18 +21,66 @@
     </div>
   </div>
 
+  <!-- Stat tiles -->
+  <div class="stat-grid">
+    <div class="stat brand">
+      <div class="stat-head">
+        <div class="icon-bubble"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></div>
+        <div class="label">Active contractors</div>
+      </div>
+      <div class="value" id="statActive">—</div>
+      <div class="sub">total on team</div>
+    </div>
+    <div class="stat indigo">
+      <div class="stat-head">
+        <div class="icon-bubble"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+        <div class="label">On shift now</div>
+      </div>
+      <div class="value" id="statOnShift">—</div>
+      <div class="sub">clocked in</div>
+    </div>
+    <div class="stat violet">
+      <div class="stat-head">
+        <div class="icon-bubble"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 0 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4z"/><path d="M6 2v3M10 2v3M14 2v3"/></svg></div>
+        <div class="label">On break now</div>
+      </div>
+      <div class="value" id="statOnBreak">—</div>
+      <div class="sub">taking a break</div>
+    </div>
+    <div class="stat cyan">
+      <div class="stat-head">
+        <div class="icon-bubble"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 17l4-4 4 4 6-6"/></svg></div>
+        <div class="label">Team hours · week</div>
+      </div>
+      <div class="value" id="statWeekHours">—</div>
+      <div class="sub" id="statWeekSub">Mon → today</div>
+    </div>
+  </div>
+
+  <!-- Live board -->
   <div class="card">
-    <h2>Who's clocked in</h2>
+    <div class="toolbar"><h2>Who's clocked in</h2><span class="muted" style="font-size:12px">Live</span></div>
     <div id="liveList" class="empty">Loading…</div>
+  </div>
+
+  <!-- Hours-this-week chart -->
+  <div class="card">
+    <div class="toolbar">
+      <h2>Hours this week</h2>
+      <span class="muted" style="font-size:12px">per contractor</span>
+    </div>
+    <div style="position:relative; height:280px">
+      <canvas id="weekChart"></canvas>
+    </div>
   </div>
 </main>
 
 <script type="module">
   import { db } from "../assets/firebase-init.js";
   import { requireRole } from "../assets/auth-router.js";
-  import { renderAdminNav, escapeHtml } from "../assets/admin-nav.js";
-  import { melTimeShort, fmtHours, hoursBetween } from "../assets/time.js";
-  import { collection, query, where, onSnapshot } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+  import { renderAdminNav, escapeHtml, getInitials } from "../assets/admin-nav.js";
+  import { melTimeShort, fmtHours, melDateKey } from "../assets/time.js";
+  import { collection, query, where, getDocs, onSnapshot } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const { profile } = await requireRole("admin");
   renderAdminNav(profile, "dashboard");
@@ -41,17 +90,32 @@
 
   const liveEl = document.getElementById("liveList");
 
+  // ----- Stats + live board -----
+  let allContractors = [];
+
   function startLive() {
     onSnapshot(
       query(collection(db, "users"), where("role", "==", "contractor"), where("active", "==", true)),
       (snap) => {
+        allContractors = [];
         const active = [];
         snap.forEach(d => {
           const u = d.data();
+          allContractors.push({ uid: d.id, ...u });
           if (u.currentEntryId && u.clockedInAt) {
-            active.push({ uid: d.id, name: u.name || u.email, start: u.clockedInAt.toDate() });
+            active.push({
+              uid: d.id,
+              name: u.name || u.email,
+              start: u.clockedInAt.toDate(),
+              breakStart: u.currentBreakStartAt?.toDate?.() || null
+            });
           }
         });
+
+        document.getElementById("statActive").textContent = allContractors.length;
+        document.getElementById("statOnShift").textContent = active.length;
+        document.getElementById("statOnBreak").textContent = active.filter(a => a.breakStart).length;
+
         if (active.length === 0) {
           liveEl.classList.add("empty");
           liveEl.innerHTML = "Nobody is clocked in right now.";
@@ -59,43 +123,139 @@
         }
         liveEl.classList.remove("empty");
         liveEl.innerHTML = `<div class="live-list">${active.map(a => {
-          const initials = (a.name || "?").split(/[\s@]+/).filter(Boolean).slice(0,2).map(s=>s[0]).join("").toUpperCase().slice(0,2);
+          const initials = getInitials(a.name);
+          const onBreak = !!a.breakStart;
+          const sinceLabel = onBreak
+            ? `On break since ${melTimeShort(a.breakStart)} Melbourne`
+            : `Working since ${melTimeShort(a.start)} Melbourne`;
+          const pill = onBreak
+            ? `<span class="status-pill break"><span class="dot"></span>On break</span>`
+            : `<span class="status-pill working"><span class="dot"></span>Working</span>`;
+          const stampMs = onBreak ? a.breakStart.getTime() : a.start.getTime();
           return `
-          <div class="live-row" data-start="${a.start.getTime()}">
+          <div class="live-row" data-stamp="${stampMs}" data-mode="${onBreak ? "break" : "work"}">
             <div class="who">
-              <div class="avatar">${initials || "?"}</div>
+              <div class="avatar">${initials}</div>
               <div>
                 <div class="name">${escapeHtml(a.name)}</div>
-                <div class="since">since ${melTimeShort(a.start)} Melbourne</div>
+                <div class="since">${sinceLabel}</div>
               </div>
             </div>
-            <div class="elapsed" data-elapsed>—</div>
+            <div style="display:flex; align-items:center; gap:14px">
+              ${pill}
+              <div class="elapsed" data-elapsed>—</div>
+            </div>
           </div>`;
         }).join("")}</div>`;
         tickElapsed();
       },
-      (err) => { console.error("Live board:", err); }
+      (err) => console.error("Live board:", err)
     );
   }
 
   function fmtElapsed(ms) {
-    const totalSec = Math.floor(ms / 1000);
+    const totalSec = Math.max(0, Math.floor(ms / 1000));
     const h = String(Math.floor(totalSec / 3600)).padStart(2, "0");
     const m = String(Math.floor((totalSec % 3600) / 60)).padStart(2, "0");
     const s = String(totalSec % 60).padStart(2, "0");
     return `${h}:${m}:${s}`;
   }
-
   function tickElapsed() {
     const now = Date.now();
     liveEl.querySelectorAll(".live-row").forEach(row => {
-      const start = Number(row.dataset.start);
-      row.querySelector("[data-elapsed]").textContent = fmtElapsed(now - start);
+      const stamp = Number(row.dataset.stamp);
+      row.querySelector("[data-elapsed]").textContent = fmtElapsed(now - stamp);
     });
   }
 
   startLive();
   setInterval(tickElapsed, 1000);
+
+  // ----- Week hours chart -----
+  function startOfWeekKey() {
+    // Monday of current Melbourne week
+    const todayKey = melDateKey();
+    const [y, m, d] = todayKey.split("-").map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    const dow = (dt.getUTCDay() + 6) % 7;     // Mon=0
+    const mon = new Date(dt.getTime() - dow * 86_400_000);
+    return `${mon.getUTCFullYear()}-${String(mon.getUTCMonth()+1).padStart(2,"0")}-${String(mon.getUTCDate()).padStart(2,"0")}`;
+  }
+
+  async function loadWeekChart() {
+    const usnap = await getDocs(query(collection(db, "users"), where("role", "==", "contractor"), where("active", "==", true)));
+    const contractors = [];
+    usnap.forEach(d => contractors.push({ uid: d.id, ...d.data() }));
+    contractors.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+    const monKey = startOfWeekKey();
+    const todayKey = melDateKey();
+
+    const hoursByUid = {};
+    await Promise.all(contractors.map(async (c) => {
+      const teSnap = await getDocs(query(collection(db, "timeEntries"), where("uid", "==", c.uid)));
+      let h = 0;
+      teSnap.forEach(d => {
+        const e = d.data();
+        if (e.date >= monKey && e.date <= todayKey && e.hoursWorked) h += e.hoursWorked;
+      });
+      hoursByUid[c.uid] = h;
+    }));
+
+    const total = Object.values(hoursByUid).reduce((s, h) => s + h, 0);
+    document.getElementById("statWeekHours").textContent = fmtHours(total);
+    document.getElementById("statWeekSub").textContent = `${monKey} → today`;
+
+    const ctx = document.getElementById("weekChart");
+    if (window._wkChart) window._wkChart.destroy();
+    window._wkChart = new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels: contractors.map(c => (c.name || c.email).split(" ")[0]),
+        datasets: [{
+          label: "Hours worked",
+          data: contractors.map(c => Number((hoursByUid[c.uid] || 0).toFixed(2))),
+          backgroundColor: "#04785799",
+          borderColor: "#047857",
+          borderWidth: 1,
+          borderRadius: 8,
+          maxBarThickness: 60
+        }]
+      },
+      options: chartOptions("Hours")
+    });
+  }
+  loadWeekChart();
+</script>
+<script type="module">
+  // Shared chart defaults — luxury feel
+  window.chartOptions = (yLabel) => ({
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: "#0B1220",
+        padding: 10,
+        cornerRadius: 8,
+        titleFont: { family: "Inter", weight: "600" },
+        bodyFont: { family: "Inter" },
+        callbacks: { label: (ctx) => `${ctx.parsed.y} ${yLabel.toLowerCase()}` }
+      }
+    },
+    scales: {
+      x: {
+        grid: { display: false },
+        ticks: { color: "#64748B", font: { family: "Inter", size: 12 } }
+      },
+      y: {
+        beginAtZero: true,
+        grid: { color: "#E6E8EE", drawBorder: false },
+        ticks: { color: "#64748B", font: { family: "Inter", size: 12 } },
+        title: { display: true, text: yLabel, color: "#64748B", font: { family: "Inter", size: 12 } }
+      }
+    }
+  });
 </script>
 </body>
 </html>

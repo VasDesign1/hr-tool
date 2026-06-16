@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Analytics — Vic Air HR</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/styles.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+</head>
+<body>
+<header class="topbar"></header>
+
+<main>
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Analytics</h1>
+      <div class="page-subtitle">Per-contractor performance, trends, and time patterns</div>
+    </div>
+    <div class="row">
+      <select id="userPick" style="min-width:220px"><option value="">— select contractor —</option></select>
+      <select id="rangePick" style="min-width:140px">
+        <option value="14">Last 14 days</option>
+        <option value="30" selected>Last 30 days</option>
+        <option value="60">Last 60 days</option>
+        <option value="90">Last 90 days</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Per-user stat tiles -->
+  <div class="stat-grid">
+    <div class="stat brand">
+      <div class="stat-head">
+        <div class="icon-bubble"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+        <div class="label">Total hours</div>
+      </div>
+      <div class="value" id="kpiHours">—</div>
+      <div class="sub" id="kpiHoursSub">in selected range</div>
+    </div>
+    <div class="stat indigo">
+      <div class="stat-head">
+        <div class="icon-bubble"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg></div>
+        <div class="label">Days worked</div>
+      </div>
+      <div class="value" id="kpiDays">—</div>
+      <div class="sub" id="kpiDaysSub">unique days</div>
+    </div>
+    <div class="stat cyan">
+      <div class="stat-head">
+        <div class="icon-bubble"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M12 3v18"/></svg></div>
+        <div class="label">Avg / worked day</div>
+      </div>
+      <div class="value" id="kpiAvg">—</div>
+      <div class="sub" id="kpiAvgSub">hours</div>
+    </div>
+    <div class="stat violet">
+      <div class="stat-head">
+        <div class="icon-bubble"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 0 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4z"/><path d="M6 2v3M10 2v3M14 2v3"/></svg></div>
+        <div class="label">Break time</div>
+      </div>
+      <div class="value" id="kpiBreak">—</div>
+      <div class="sub" id="kpiBreakSub">total breaks</div>
+    </div>
+  </div>
+
+  <!-- Hours per day -->
+  <div class="card">
+    <div class="toolbar"><h2>Daily hours worked</h2><span class="muted" style="font-size:12px" id="dailyMeta">—</span></div>
+    <div style="position:relative; height:280px"><canvas id="dailyChart"></canvas></div>
+  </div>
+
+  <!-- Clock-in time distribution -->
+  <div class="card">
+    <div class="toolbar"><h2>Clock-in time pattern</h2><span class="muted" style="font-size:12px">When this contractor typically starts (Melbourne)</span></div>
+    <div style="position:relative; height:240px"><canvas id="clockInChart"></canvas></div>
+  </div>
+
+  <!-- Day-of-week pattern -->
+  <div class="card">
+    <div class="toolbar"><h2>Day-of-week pattern</h2><span class="muted" style="font-size:12px">Average hours by weekday</span></div>
+    <div style="position:relative; height:240px"><canvas id="dowChart"></canvas></div>
+  </div>
+
+  <!-- Team comparison -->
+  <div class="card">
+    <div class="toolbar"><h2>Team comparison · range</h2><span class="muted" style="font-size:12px">All contractors over selected range</span></div>
+    <div style="position:relative; height:280px"><canvas id="teamChart"></canvas></div>
+  </div>
+</main>
+
+<script type="module">
+  import { db } from "../assets/firebase-init.js";
+  import { requireRole } from "../assets/auth-router.js";
+  import { renderAdminNav, escapeHtml } from "../assets/admin-nav.js";
+  import { fmtHours, melDateKey, lastNDateKeys, fmtDay, MEL_TZ } from "../assets/time.js";
+  import { collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+  const { profile } = await requireRole("admin");
+  renderAdminNav(profile, "analytics");
+
+  const userPick  = document.getElementById("userPick");
+  const rangePick = document.getElementById("rangePick");
+
+  // Load contractors once
+  const usnap = await getDocs(query(collection(db, "users"), where("role", "==", "contractor")));
+  const users = [];
+  usnap.forEach(d => users.push({ uid: d.id, ...d.data() }));
+  users.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  userPick.innerHTML = `<option value="">— select contractor —</option>` +
+    users.map(u => `<option value="${u.uid}">${escapeHtml(u.name || u.email)}</option>`).join("");
+  if (users.length > 0) userPick.value = users[0].uid;
+
+  function fmtMinutes(mins) {
+    if (mins == null || isNaN(mins) || mins < 1) return "0m";
+    const h = Math.floor(mins / 60), m = Math.round(mins % 60);
+    if (h === 0) return `${m}m`;
+    if (m === 0) return `${h}h`;
+    return `${h}h ${m}m`;
+  }
+
+  function chartBase(yLabel) {
+    return {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: "#0B1220",
+          padding: 10, cornerRadius: 8,
+          titleFont: { family: "Inter", weight: "600" },
+          bodyFont: { family: "Inter" }
+        }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 11 } } },
+        y: {
+          beginAtZero: true,
+          grid: { color: "#E6E8EE", drawBorder: false },
+          ticks: { color: "#64748B", font: { family: "Inter", size: 12 } },
+          title: { display: true, text: yLabel, color: "#64748B", font: { family: "Inter", size: 12 } }
+        }
+      }
+    };
+  }
+
+  let charts = {};
+  function destroy(key) { if (charts[key]) { charts[key].destroy(); charts[key] = null; } }
+
+  async function loadUserAnalytics() {
+    const uid = userPick.value;
+    const n = Number(rangePick.value);
+    if (!uid) return;
+
+    const keys = lastNDateKeys(n);
+    const oldestKey = keys[keys.length - 1];
+    const todayKey  = keys[0];
+
+    const teSnap = await getDocs(query(collection(db, "timeEntries"), where("uid", "==", uid)));
+    const entries = [];
+    teSnap.forEach(d => entries.push(d.data()));
+    const inRange = entries.filter(e => e.date >= oldestKey && e.date <= todayKey);
+
+    // KPIs
+    let totalHours = 0, totalBreakMins = 0;
+    const daySet = new Set();
+    inRange.forEach(e => {
+      if (e.hoursWorked) totalHours += e.hoursWorked;
+      if (e.hoursWorked) daySet.add(e.date);
+      if (e.breakMinutes) totalBreakMins += e.breakMinutes;
+    });
+    document.getElementById("kpiHours").textContent = fmtHours(totalHours);
+    document.getElementById("kpiHoursSub").textContent = `last ${n} days`;
+    document.getElementById("kpiDays").textContent = daySet.size;
+    document.getElementById("kpiDaysSub").textContent = `of ${n}`;
+    document.getElementById("kpiAvg").textContent = daySet.size > 0 ? fmtHours(totalHours / daySet.size) : "—";
+    document.getElementById("kpiBreak").textContent = fmtMinutes(totalBreakMins);
+
+    // Daily chart — last N days, oldest → newest
+    const orderedKeys = [...keys].reverse();
+    const dailyData = {};
+    orderedKeys.forEach(k => dailyData[k] = 0);
+    inRange.forEach(e => { if (e.hoursWorked && dailyData[e.date] !== undefined) dailyData[e.date] += e.hoursWorked; });
+    destroy("daily");
+    charts.daily = new Chart(document.getElementById("dailyChart"), {
+      type: "bar",
+      data: {
+        labels: orderedKeys.map(k => k.slice(5)), // MM-DD
+        datasets: [{
+          label: "Hours",
+          data: orderedKeys.map(k => Number(dailyData[k].toFixed(2))),
+          backgroundColor: "#04785799",
+          borderColor: "#047857", borderWidth: 1, borderRadius: 6, maxBarThickness: 26
+        }]
+      },
+      options: chartBase("Hours")
+    });
+    document.getElementById("dailyMeta").textContent = `${oldestKey} → ${todayKey}`;
+
+    // Clock-in time distribution (hour buckets 5–20)
+    const buckets = new Array(16).fill(0); // index 0 = 5am, 15 = 8pm
+    inRange.forEach(e => {
+      const start = e.clockInUTC?.toDate?.();
+      if (!start) return;
+      const hourStr = start.toLocaleTimeString("en-AU", { timeZone: MEL_TZ, hour12: false, hour: "2-digit" });
+      const h = Number(hourStr);
+      if (h >= 5 && h <= 20) buckets[h - 5]++;
+    });
+    const hourLabels = Array.from({ length: 16 }, (_, i) => `${i + 5}:00`);
+    destroy("clockIn");
+    charts.clockIn = new Chart(document.getElementById("clockInChart"), {
+      type: "bar",
+      data: {
+        labels: hourLabels,
+        datasets: [{
+          label: "Clock-ins",
+          data: buckets,
+          backgroundColor: "#4F46E599",
+          borderColor: "#4F46E5", borderWidth: 1, borderRadius: 6, maxBarThickness: 28
+        }]
+      },
+      options: chartBase("Sessions")
+    });
+
+    // Day-of-week average hours
+    const dowSum = new Array(7).fill(0), dowDays = new Array(7).fill(0);
+    const seenDayDow = new Map(); // date -> dow, so we count each calendar day once
+    inRange.forEach(e => {
+      if (!e.hoursWorked) return;
+      const [y, m, d] = e.date.split("-").map(Number);
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      const dow = (dt.getUTCDay() + 6) % 7; // Mon=0
+      dowSum[dow] += e.hoursWorked;
+      if (!seenDayDow.has(e.date)) { seenDayDow.set(e.date, dow); dowDays[dow]++; }
+    });
+    const dowAvg = dowSum.map((s, i) => dowDays[i] > 0 ? s / dowDays[i] : 0);
+    destroy("dow");
+    charts.dow = new Chart(document.getElementById("dowChart"), {
+      type: "bar",
+      data: {
+        labels: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],
+        datasets: [{
+          label: "Avg hours",
+          data: dowAvg.map(v => Number(v.toFixed(2))),
+          backgroundColor: "#0891B299",
+          borderColor: "#0891B2", borderWidth: 1, borderRadius: 6, maxBarThickness: 60
+        }]
+      },
+      options: chartBase("Avg hours / day")
+    });
+  }
+
+  async function loadTeamChart() {
+    const n = Number(rangePick.value);
+    const keys = lastNDateKeys(n);
+    const oldestKey = keys[keys.length - 1];
+    const todayKey  = keys[0];
+
+    const hoursByUid = {};
+    await Promise.all(users.filter(u => u.active !== false).map(async (u) => {
+      const teSnap = await getDocs(query(collection(db, "timeEntries"), where("uid", "==", u.uid)));
+      let h = 0;
+      teSnap.forEach(d => {
+        const e = d.data();
+        if (e.date >= oldestKey && e.date <= todayKey && e.hoursWorked) h += e.hoursWorked;
+      });
+      hoursByUid[u.uid] = h;
+    }));
+
+    const active = users.filter(u => u.active !== false);
+    destroy("team");
+    charts.team = new Chart(document.getElementById("teamChart"), {
+      type: "bar",
+      data: {
+        labels: active.map(u => (u.name || u.email).split(" ")[0]),
+        datasets: [{
+          label: "Hours",
+          data: active.map(u => Number((hoursByUid[u.uid] || 0).toFixed(2))),
+          backgroundColor: ["#047857","#4F46E5","#0891B2","#7C3AED","#D97706","#EC4899"].map(c => c + "99"),
+          borderColor: ["#047857","#4F46E5","#0891B2","#7C3AED","#D97706","#EC4899"],
+          borderWidth: 1, borderRadius: 8, maxBarThickness: 70
+        }]
+      },
+      options: chartBase("Hours")
+    });
+  }
+
+  userPick.addEventListener("change", () => { loadUserAnalytics(); });
+  rangePick.addEventListener("change", () => { loadUserAnalytics(); loadTeamChart(); });
+
+  if (userPick.value) loadUserAnalytics();
+  loadTeamChart();
+</script>
+</body>
+</html>
