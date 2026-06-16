@@ -95,6 +95,12 @@
       <div id="leaveRequestsList" class="empty">Loading…</div>
     </div>
   </div>
+
+  <!-- Payslips -->
+  <div class="card">
+    <h2>Payslips</h2>
+    <div id="payslipsList" class="empty">Loading…</div>
+  </div>
 </main>
 
 <!-- Request leave modal -->
@@ -136,6 +142,7 @@
     leaveHoursFor, computeBalance, fmtLeave, ENTITLEMENT_HOURS, DAILY_HOURS
   } from "../assets/leave.js";
   import { renderCalendar } from "../assets/calendar.js";
+  import { periodLabel, fmtAUD } from "../assets/pay.js";
   import {
     collection, query, where, getDocs, addDoc, doc, getDoc, updateDoc, deleteDoc, orderBy, serverTimestamp, Timestamp
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
@@ -445,6 +452,40 @@
   });
 
   // ====================================================================
+  // PAYSLIPS SECTION
+  // ====================================================================
+  async function refreshPayslips() {
+    const listEl = document.getElementById("payslipsList");
+    const snap = await getDocs(query(
+      collection(db, "payPeriods"),
+      where("uid", "==", user.uid)
+    ));
+    const slips = [];
+    snap.forEach(d => slips.push({ id: d.id, ...d.data() }));
+    if (slips.length === 0) {
+      listEl.classList.add("empty");
+      listEl.innerHTML = "No payslips yet. Your first slip will appear once admin finalises a pay period.";
+      return;
+    }
+    slips.sort((a, b) => (b.year - a.year) || (b.month - a.month));
+    listEl.classList.remove("empty");
+    listEl.innerHTML = `<table class="data">
+      <thead><tr><th>Period</th><th>Hours</th><th>Gross</th><th>Status</th></tr></thead>
+      <tbody>${slips.map(s => {
+        const badge = s.status === "paid"      ? `<span class="badge ok">Paid</span>`
+                    : s.status === "finalised" ? `<span class="badge pending">Awaiting payment</span>`
+                    : `<span class="badge off">Draft</span>`;
+        return `<tr>
+          <td>${escapeHtml(periodLabel({ year: s.year, month: s.month }))}<div class="muted" style="font-size:11px">${s.periodStart} → ${s.periodEnd}</div></td>
+          <td>${fmtHours(s.hoursWorked)}</td>
+          <td><strong>${fmtAUD(s.grossAmount)}</strong></td>
+          <td>${badge}</td>
+        </tr>`;
+      }).join("")}</tbody>
+    </table>`;
+  }
+
+  // ====================================================================
   // INITIAL LOAD
   // ====================================================================
   if (currentEntryId) {
@@ -461,6 +502,7 @@
   await refreshToday();
   await refreshRecent();
   await refreshLeave();
+  await refreshPayslips();
   renderShiftState();
   tickClocks();
   setInterval(tickClocks, 1000);

@@ -7,6 +7,7 @@ export function renderAdminNav(profile, currentPage) {
     { id: "users",      label: "Users",      href: "users.html"      },
     { id: "timesheets", label: "Timesheets", href: "timesheets.html" },
     { id: "leave",      label: "Leave",      href: "leave.html"      },
+    { id: "payroll",    label: "Payroll",    href: "payroll.html"    },
   ];
 
   const linksHtml = pages.map(p => {

@@ -67,6 +67,8 @@
       <input type="text" id="editName" required>
       <label>Email <span class="muted" style="font-size:11px">(read-only)</span></label>
       <input type="email" id="editEmail" readonly disabled>
+      <label>Monthly pay amount (AUD) <span class="muted" style="font-size:11px">(what HR company pays per month)</span></label>
+      <input type="number" id="editPayAmount" min="0" step="0.01" placeholder="e.g. 4500">
       <div class="error" id="editErr"></div>
       <div class="actions">
         <button type="button" class="ghost" id="editCancelBtn">Cancel</button>
@@ -153,6 +155,7 @@
       document.getElementById("editUid").value = data.uid;
       document.getElementById("editName").value = u.name || "";
       document.getElementById("editEmail").value = u.email;
+      document.getElementById("editPayAmount").value = u.payAmount ?? "";
       document.getElementById("editErr").textContent = "";
       document.getElementById("editModal").classList.add("open");
     } else if (act === "reset") {
@@ -244,8 +247,14 @@
     e.preventDefault();
     const uid = document.getElementById("editUid").value;
     const name = document.getElementById("editName").value.trim();
+    const payRaw = document.getElementById("editPayAmount").value.trim();
+    const payAmount = payRaw === "" ? null : Number(payRaw);
+    if (payAmount != null && (isNaN(payAmount) || payAmount < 0)) {
+      document.getElementById("editErr").textContent = "Pay amount must be a positive number.";
+      return;
+    }
     try {
-      await updateDoc(doc(db, "users", uid), { name });
+      await updateDoc(doc(db, "users", uid), { name, payAmount });
       document.getElementById("editModal").classList.remove("open");
       loadUsers();
     } catch (ex) {
