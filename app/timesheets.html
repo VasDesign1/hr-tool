@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Timesheets — Vic Air HR</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/styles.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+</head>
+<body>
+<div class="simple-shell">
+
+  <header class="simple-header">
+    <div class="brand-row">
+      <div class="logo">V</div>
+      <div class="name">Vic Air<small>HR Portal</small></div>
+    </div>
+    <nav class="simple-nav">
+      <a href="index.html">Dashboard</a>
+      <a class="active" href="timesheets.html">Timesheets</a>
+      <a href="leave.html">Leave</a>
+      <a href="profile.html">Profile</a>
+    </nav>
+    <div class="header-user">
+      <div class="avatar" id="avatar">?</div>
+      <div>
+        <div class="name" id="who">…</div>
+        <div class="role">Contractor</div>
+      </div>
+      <button class="ghost" id="logoutBtn">Sign out</button>
+    </div>
+  </header>
+
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Timesheets</h1>
+      <div class="page-subtitle">Your work history and fix requests</div>
+    </div>
+    <div class="row">
+      <select id="rangePick" style="min-width:160px">
+        <option value="7">Last 7 days</option>
+        <option value="30" selected>This month (30 days)</option>
+        <option value="365">This year (365 days)</option>
+      </select>
+      <button id="requestFixBtn">Request a fix</button>
+    </div>
+  </div>
+
+  <!-- KPI tiles -->
+  <div class="stat-grid">
+    <div class="stat brand">
+      <div class="stat-head">
+        <div class="icon-bubble"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+        <div class="label">Total hours</div>
+      </div>
+      <div class="value" id="kpiHours">—</div>
+      <div class="sub" id="kpiHoursSub">range</div>
+    </div>
+    <div class="stat indigo">
+      <div class="stat-head">
+        <div class="icon-bubble"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg></div>
+        <div class="label">Days worked</div>
+      </div>
+      <div class="value" id="kpiDays">—</div>
+      <div class="sub" id="kpiDaysSub">unique days</div>
+    </div>
+    <div class="stat cyan">
+      <div class="stat-head">
+        <div class="icon-bubble"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M12 3v18"/></svg></div>
+        <div class="label">Avg / worked day</div>
+      </div>
+      <div class="value" id="kpiAvg">—</div>
+      <div class="sub">hours</div>
+    </div>
+    <div class="stat violet">
+      <div class="stat-head">
+        <div class="icon-bubble"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 0 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4z"/><path d="M6 2v3M10 2v3M14 2v3"/></svg></div>
+        <div class="label">Break time</div>
+      </div>
+      <div class="value" id="kpiBreak">—</div>
+      <div class="sub">total</div>
+    </div>
+  </div>
+
+  <!-- Hours chart -->
+  <div class="card">
+    <div class="toolbar"><h2>Hours per day</h2><span class="muted" style="font-size:12px" id="chartMeta">—</span></div>
+    <div style="position:relative; height:260px"><canvas id="dailyChart"></canvas></div>
+  </div>
+
+  <!-- Day-by-day table -->
+  <div class="card">
+    <div class="toolbar"><h2>Day-by-day</h2></div>
+    <div id="daysList" class="empty">Loading…</div>
+  </div>
+
+  <!-- My fix requests -->
+  <div class="card">
+    <div class="toolbar"><h2>My fix requests</h2></div>
+    <div id="fixList" class="empty">No fix requests yet.</div>
+  </div>
+</div>
+
+<!-- Request a fix modal -->
+<div class="modal-backdrop" id="fixModal">
+  <div class="modal">
+    <h2>Request a time-entry fix</h2>
+    <p class="muted" style="margin-top:4px; font-size:13px">Tell admin what's wrong (forgot to clock out, wrong time, etc.). They'll fix it for you.</p>
+    <form id="fixForm">
+      <label>Date</label>
+      <input type="date" id="fixDate" required>
+      <label>Describe the issue</label>
+      <textarea id="fixDesc" rows="4" required placeholder="e.g. I forgot to clock out yesterday — please set clock-out to 16:30."></textarea>
+      <div class="error" id="fixErr"></div>
+      <div class="actions">
+        <button type="button" class="ghost" id="fixCancelBtn">Cancel</button>
+        <button type="submit" id="fixSubmitBtn">Submit</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script type="module">
+  import { auth, db } from "../assets/firebase-init.js";
+  import { requireRole, logout } from "../assets/auth-router.js";
+  import { getInitials, escapeHtml } from "../assets/admin-nav.js";
+  import { fmtHours, fmtDay, lastNDateKeys, melDateKey } from "../assets/time.js";
+  import {
+    collection, query, where, getDocs, addDoc, serverTimestamp
+  } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+  const { user, profile } = await requireRole("contractor");
+  document.getElementById("who").textContent = profile.name || profile.email || "";
+  document.getElementById("avatar").textContent = getInitials(profile.name || profile.email);
+  document.getElementById("logoutBtn").addEventListener("click", logout);
+
+  const rangePick = document.getElementById("rangePick");
+
+  function fmtMinutes(mins) {
+    if (mins == null || isNaN(mins) || mins < 1) return "0m";
+    const h = Math.floor(mins / 60), m = Math.round(mins % 60);
+    if (h === 0) return `${m}m`;
+    if (m === 0) return `${h}h`;
+    return `${h}h ${m}m`;
+  }
+
+  let chartRef = null;
+  function chartBase(yLabel) {
+    return {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { backgroundColor: "#0B1220", padding: 10, cornerRadius: 8, titleFont: { family: "Inter", weight: "600" }, bodyFont: { family: "Inter" } }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 11 }, maxTicksLimit: 30 } },
+        y: { beginAtZero: true, grid: { color: "#E6E8EE", drawBorder: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 12 } }, title: { display: true, text: yLabel, color: "#64748B", font: { family: "Inter", size: 12 } } }
+      }
+    };
+  }
+
+  async function loadRange() {
+    const n = Number(rangePick.value);
+    const keys = lastNDateKeys(n);
+    const oldestKey = keys[keys.length - 1];
+
+    const teSnap = await getDocs(query(collection(db, "timeEntries"), where("uid", "==", user.uid)));
+    const entries = [];
+    teSnap.forEach(d => entries.push(d.data()));
+    const inRange = entries.filter(e => e.date >= oldestKey && e.date <= keys[0]);
+
+    let total = 0, breakMins = 0;
+    const daySet = new Set();
+    inRange.forEach(e => {
+      if (e.hoursWorked) { total += e.hoursWorked; daySet.add(e.date); }
+      if (e.breakMinutes) breakMins += e.breakMinutes;
+    });
+    document.getElementById("kpiHours").textContent = fmtHours(total);
+    document.getElementById("kpiHoursSub").textContent = `last ${n} days`;
+    document.getElementById("kpiDays").textContent = daySet.size;
+    document.getElementById("kpiDaysSub").textContent = `of ${n}`;
+    document.getElementById("kpiAvg").textContent = daySet.size > 0 ? fmtHours(total / daySet.size) : "—";
+    document.getElementById("kpiBreak").textContent = fmtMinutes(breakMins);
+
+    // Chart
+    const ordered = [...keys].reverse();
+    const dailyData = {};
+    ordered.forEach(k => dailyData[k] = 0);
+    inRange.forEach(e => { if (e.hoursWorked && dailyData[e.date] !== undefined) dailyData[e.date] += e.hoursWorked; });
+    if (chartRef) chartRef.destroy();
+    chartRef = new Chart(document.getElementById("dailyChart"), {
+      type: "bar",
+      data: {
+        labels: ordered.map(k => k.slice(5)),
+        datasets: [{
+          label: "Hours",
+          data: ordered.map(k => Number(dailyData[k].toFixed(2))),
+          backgroundColor: "#04785799",
+          borderColor: "#047857", borderWidth: 1, borderRadius: 5, maxBarThickness: n > 90 ? 6 : n > 30 ? 12 : 22
+        }]
+      },
+      options: chartBase("Hours")
+    });
+    document.getElementById("chartMeta").textContent = `${oldestKey} → ${keys[0]}`;
+
+    // Day-by-day table — only days with entries, newest first
+    const daysList = document.getElementById("daysList");
+    const daysWithEntries = ordered.filter(k => dailyData[k] > 0).reverse();
+    if (daysWithEntries.length === 0) {
+      daysList.classList.add("empty");
+      daysList.innerHTML = "No entries in this range.";
+    } else {
+      daysList.classList.remove("empty");
+      daysList.innerHTML = `<table class="data">
+        <thead><tr><th>Date</th><th>Hours</th></tr></thead>
+        <tbody>${daysWithEntries.map(k => `<tr><td>${fmtDay(k)}</td><td>${fmtHours(dailyData[k])}</td></tr>`).join("")}</tbody>
+      </table>`;
+    }
+  }
+
+  async function loadFixRequests() {
+    const listEl = document.getElementById("fixList");
+    const snap = await getDocs(query(collection(db, "timeEditRequests"), where("uid", "==", user.uid)));
+    const reqs = [];
+    snap.forEach(d => reqs.push({ id: d.id, ...d.data() }));
+    if (reqs.length === 0) {
+      listEl.classList.add("empty");
+      listEl.innerHTML = "No fix requests yet.";
+      return;
+    }
+    reqs.sort((a, b) => (b.submittedAt?.toMillis?.() || 0) - (a.submittedAt?.toMillis?.() || 0));
+    listEl.classList.remove("empty");
+    listEl.innerHTML = `<table class="data">
+      <thead><tr><th>Date</th><th>Description</th><th>Status</th></tr></thead>
+      <tbody>${reqs.map(r => {
+        const badge = r.status === "resolved"  ? `<span class="badge ok">Resolved</span>`
+                    : r.status === "dismissed" ? `<span class="badge off">Dismissed</span>`
+                    : `<span class="badge pending">Pending</span>`;
+        const note = r.adminNote ? `<div class="muted" style="font-size:11px; margin-top:4px">Admin: ${escapeHtml(r.adminNote)}</div>` : "";
+        return `<tr>
+          <td>${escapeHtml(r.date)}</td>
+          <td class="muted" style="font-size:13px">${escapeHtml(r.description)}${note}</td>
+          <td>${badge}</td>
+        </tr>`;
+      }).join("")}</tbody>
+    </table>`;
+  }
+
+  document.getElementById("requestFixBtn").addEventListener("click", () => {
+    document.getElementById("fixForm").reset();
+    document.getElementById("fixDate").value = melDateKey();
+    document.getElementById("fixErr").textContent = "";
+    document.getElementById("fixModal").classList.add("open");
+  });
+  document.getElementById("fixCancelBtn").addEventListener("click", () => document.getElementById("fixModal").classList.remove("open"));
+  document.getElementById("fixForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById("fixSubmitBtn");
+    const errEl = document.getElementById("fixErr");
+    errEl.textContent = "";
+    btn.disabled = true; btn.textContent = "Submitting…";
+    try {
+      await addDoc(collection(db, "timeEditRequests"), {
+        uid: user.uid,
+        contractorName: profile.name || profile.email,
+        date: document.getElementById("fixDate").value,
+        description: document.getElementById("fixDesc").value.trim(),
+        status: "pending",
+        submittedAt: serverTimestamp()
+      });
+      document.getElementById("fixModal").classList.remove("open");
+      loadFixRequests();
+    } catch (ex) { errEl.textContent = "Failed: " + (ex.message || ex.code); }
+    finally { btn.disabled = false; btn.textContent = "Submit"; }
+  });
+
+  rangePick.addEventListener("change", loadRange);
+  loadRange();
+  loadFixRequests();
+</script>
+</body>
+</html>

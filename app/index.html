@@ -19,6 +19,8 @@
     </div>
     <nav class="simple-nav">
       <a class="active" href="index.html">Dashboard</a>
+      <a href="timesheets.html">Timesheets</a>
+      <a href="leave.html">Leave</a>
       <a href="profile.html">Profile</a>
     </nav>
     <div class="header-user">
@@ -98,87 +100,13 @@
     </div>
   </div>
 
-  <!-- Last 7 days -->
+  <!-- Upcoming leave preview -->
   <div class="card">
     <div class="toolbar">
-      <h2>Last 7 days</h2>
-      <button class="ghost" id="requestFixBtn">Request a fix</button>
+      <h2>Upcoming leave</h2>
+      <a href="leave.html" style="font-size:13px">Manage leave →</a>
     </div>
-    <div id="recentList" class="empty">Loading…</div>
-    <div id="myEditRequestsList" style="margin-top:14px"></div>
-  </div>
-
-  <!-- Leave -->
-  <div class="card">
-    <div class="toolbar">
-      <h2>Leave</h2>
-      <button id="requestLeaveBtn">Request leave</button>
-    </div>
-
-    <div style="margin-top:6px">
-      <div class="muted" style="font-size:12px; margin-bottom:8px">Calendar — click a day to request leave for it</div>
-      <div id="leaveCalendar"></div>
-      <div class="cal-legend">
-        <span class="lg pending"><span class="swatch"></span>Pending</span>
-        <span class="lg approved"><span class="swatch"></span>Approved</span>
-        <span class="lg denied"><span class="swatch"></span>Denied</span>
-        <span class="lg cancelled"><span class="swatch"></span>Cancelled</span>
-        <span class="lg holiday"><span class="swatch"></span>Vic public holiday</span>
-      </div>
-    </div>
-
-    <div style="margin-top:18px">
-      <div class="muted" style="font-size:12px; margin-bottom:6px">My requests</div>
-      <div id="leaveRequestsList" class="empty">No requests yet.</div>
-    </div>
-  </div>
-</div>
-
-<!-- Request a fix modal -->
-<div class="modal-backdrop" id="fixModal">
-  <div class="modal">
-    <h2>Request a time-entry fix</h2>
-    <p class="muted" style="margin-top:4px; font-size:13px">Tell admin what's wrong (forgot to clock out, wrong time, etc.). They'll fix it for you.</p>
-    <form id="fixForm">
-      <label>Date</label>
-      <input type="date" id="fixDate" required>
-      <label>Describe the issue</label>
-      <textarea id="fixDesc" rows="4" required placeholder="e.g. I forgot to clock out yesterday — please set clock-out to 16:30."></textarea>
-      <div class="error" id="fixErr"></div>
-      <div class="actions">
-        <button type="button" class="ghost" id="fixCancelBtn">Cancel</button>
-        <button type="submit" id="fixSubmitBtn">Submit</button>
-      </div>
-    </form>
-  </div>
-</div>
-
-<!-- Request leave modal -->
-<div class="modal-backdrop" id="leaveModal">
-  <div class="modal">
-    <h2>Request leave</h2>
-    <form id="leaveForm">
-      <label>Start date</label>
-      <input type="date" id="leaveStart" required>
-      <label>End date</label>
-      <input type="date" id="leaveEnd" required>
-      <div style="display:flex; gap:18px; margin-top:10px">
-        <label style="display:flex; align-items:center; gap:6px; font-size:13px; margin:0">
-          <input type="checkbox" id="halfStart" style="width:auto"> Half-day on start
-        </label>
-        <label style="display:flex; align-items:center; gap:6px; font-size:13px; margin:0">
-          <input type="checkbox" id="halfEnd" style="width:auto"> Half-day on end
-        </label>
-      </div>
-      <label>Reason / notes <span class="muted" style="font-size:11px">(optional)</span></label>
-      <textarea id="leaveReason" rows="2"></textarea>
-      <div id="leavePreview" style="margin-top:12px; padding:12px; background:var(--surface-2); border:1px solid var(--border); border-radius:var(--r-sm); font-size:13px"></div>
-      <div class="error" id="leaveErr"></div>
-      <div class="actions">
-        <button type="button" class="ghost" id="leaveCancelBtn">Cancel</button>
-        <button type="submit" id="leaveSubmitBtn">Submit request</button>
-      </div>
-    </form>
+    <div id="upcomingLeave" class="empty">Loading…</div>
   </div>
 </div>
 
@@ -186,16 +114,10 @@
   import { auth, db } from "../assets/firebase-init.js";
   import { requireRole, logout } from "../assets/auth-router.js";
   import { getInitials, escapeHtml } from "../assets/admin-nav.js";
+  import { melClock, localClock, melDateKey, melTimeShort, fmtHours, fmtDay } from "../assets/time.js";
+  import { computeBalance, fmtLeave } from "../assets/leave.js";
   import {
-    melClock, localClock, melDateKey, melTimeShort, fmtHours, hoursBetween, fmtDay, lastNDateKeys
-  } from "../assets/time.js";
-  import {
-    leaveHoursFor, computeBalance, fmtLeave, ENTITLEMENT_HOURS, DAILY_HOURS
-  } from "../assets/leave.js";
-  import { renderCalendar } from "../assets/calendar.js";
-  import { holidaysAsCalendarEntries, publicHolidaysInRange, holidayName } from "../assets/holidays.js";
-  import {
-    collection, query, where, getDocs, addDoc, doc, getDoc, updateDoc, orderBy,
+    collection, query, where, getDocs, addDoc, doc, getDoc, updateDoc,
     serverTimestamp, Timestamp, arrayUnion
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
@@ -213,7 +135,7 @@
     new Date().toLocaleDateString("en-AU", { timeZone: "Australia/Melbourne", weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
   // ====================================================================
-  // CLOCK + BREAK SECTION
+  // CLOCK + BREAK
   // ====================================================================
   const primaryBtn = document.getElementById("primaryBtn");
   const shiftControls = document.getElementById("shiftControls");
@@ -222,9 +144,9 @@
   const shiftRun = document.getElementById("shiftRunning");
 
   let currentEntryId = profile.currentEntryId || null;
-  let currentStartMs = null;                                  // shift start
+  let currentStartMs = null;
   let currentBreakStartMs = profile.currentBreakStartAt?.toMillis?.() || null;
-  let priorBreakMs = 0;                                       // already-closed break minutes for current entry (ms)
+  let priorBreakMs = 0;
   let todayHoursClosed = 0;
   let todayBreakMinsClosed = 0;
 
@@ -233,40 +155,27 @@
     document.getElementById("melTime").textContent = melClock(now);
     document.getElementById("localTime").textContent = localClock(now);
     if (!currentEntryId) return;
-
     const nowMs = now.getTime();
-    let liveBreakMs = 0;
     if (currentBreakStartMs) {
-      liveBreakMs = nowMs - currentBreakStartMs;
-      shiftRun.textContent = fmtElapsed(liveBreakMs);
+      shiftRun.textContent = fmtElapsed(nowMs - currentBreakStartMs);
     } else {
-      const liveWorkMs = nowMs - currentStartMs - priorBreakMs;
-      shiftRun.textContent = fmtElapsed(liveWorkMs);
+      shiftRun.textContent = fmtElapsed(nowMs - currentStartMs - priorBreakMs);
     }
-
-    // Stat tile live updates
     const liveWorkH = currentBreakStartMs
       ? (currentBreakStartMs - currentStartMs - priorBreakMs) / 3_600_000
       : (nowMs - currentStartMs - priorBreakMs) / 3_600_000;
     document.getElementById("statToday").textContent = fmtHours(todayHoursClosed + liveWorkH);
     document.getElementById("statTodayBar").style.width = Math.min(100, ((todayHoursClosed + liveWorkH) / 7.6) * 100) + "%";
-
     const liveBreakMin = currentBreakStartMs ? (nowMs - currentBreakStartMs) / 60_000 : 0;
-    const totalBreakMin = todayBreakMinsClosed + priorBreakMs / 60_000 + liveBreakMin;
-    document.getElementById("statBreak").textContent = fmtMinutes(totalBreakMin);
+    document.getElementById("statBreak").textContent = fmtMinutes(todayBreakMinsClosed + priorBreakMs / 60_000 + liveBreakMin);
   }
   function fmtElapsed(ms) {
     const totalSec = Math.max(0, Math.floor(ms / 1000));
-    const h = String(Math.floor(totalSec / 3600)).padStart(2, "0");
-    const m = String(Math.floor((totalSec % 3600) / 60)).padStart(2, "0");
-    const s = String(totalSec % 60).padStart(2, "0");
-    return `${h}:${m}:${s}`;
+    return `${String(Math.floor(totalSec/3600)).padStart(2,"0")}:${String(Math.floor((totalSec%3600)/60)).padStart(2,"0")}:${String(totalSec%60).padStart(2,"0")}`;
   }
   function fmtMinutes(mins) {
-    if (mins == null || isNaN(mins)) return "—";
-    if (mins < 1) return "0m";
-    const h = Math.floor(mins / 60);
-    const m = Math.round(mins % 60);
+    if (mins == null || isNaN(mins) || mins < 1) return "0m";
+    const h = Math.floor(mins / 60), m = Math.round(mins % 60);
     if (h === 0) return `${m}m`;
     if (m === 0) return `${h}h`;
     return `${h}h ${m}m`;
@@ -274,20 +183,14 @@
 
   async function refreshTodayMetrics() {
     const todayKey = melDateKey();
-    const snap = await getDocs(query(
-      collection(db, "timeEntries"),
-      where("uid", "==", user.uid),
-      where("date", "==", todayKey)
-    ));
-    todayHoursClosed = 0;
-    todayBreakMinsClosed = 0;
+    const snap = await getDocs(query(collection(db, "timeEntries"), where("uid", "==", user.uid), where("date", "==", todayKey)));
+    todayHoursClosed = 0; todayBreakMinsClosed = 0;
     snap.forEach(d => {
       const e = d.data();
       if (e.clockOutUTC) {
         todayHoursClosed += e.hoursWorked || 0;
         todayBreakMinsClosed += e.breakMinutes || 0;
-      } else if (e.breaks?.length) {
-        // open entry — count closed breaks already on it
+      } else if (e.breakMinutes) {
         priorBreakMs = (e.breakMinutes || 0) * 60_000;
       }
     });
@@ -316,8 +219,7 @@
       shiftControls.className = "shift-controls two";
       shiftControls.innerHTML = `
         <button id="primaryBtn" class="shift-btn resume">Resume Work</button>
-        <button id="secondaryBtn" class="shift-btn secondary">End Shift</button>
-      `;
+        <button id="secondaryBtn" class="shift-btn secondary">End Shift</button>`;
       attachPrimaryHandler();
       document.getElementById("secondaryBtn").addEventListener("click", endShift);
       shiftStatusText.innerHTML = `<span class="status-pill break"><span class="dot"></span>On break</span>`;
@@ -326,8 +228,7 @@
       shiftControls.className = "shift-controls two";
       shiftControls.innerHTML = `
         <button id="primaryBtn" class="shift-btn end">End Shift</button>
-        <button id="secondaryBtn" class="shift-btn break">Take Break</button>
-      `;
+        <button id="secondaryBtn" class="shift-btn break">Take Break</button>`;
       attachPrimaryHandler();
       document.getElementById("secondaryBtn").addEventListener("click", takeBreak);
       shiftStatusText.innerHTML = `<span class="status-pill working"><span class="dot"></span>Working since ${melTimeShort(new Date(currentStartMs))} Melbourne</span>`;
@@ -336,52 +237,33 @@
   }
 
   function attachPrimaryHandler() {
-    const btn = document.getElementById("primaryBtn");
-    btn.addEventListener("click", async () => {
-      if (!currentEntryId) {
-        return clockIn();
-      } else if (currentBreakStartMs) {
-        return resumeWork();
-      } else {
-        return endShift();
-      }
+    document.getElementById("primaryBtn").addEventListener("click", async () => {
+      if (!currentEntryId) return clockIn();
+      if (currentBreakStartMs) return resumeWork();
+      return endShift();
     });
   }
 
   async function clockIn() {
-    if (outsideWorkingWindow()) {
-      if (!confirm("Clock in outside the 08:30–16:30 Melbourne window?\n\nIt'll still be logged.")) return;
-    }
+    if (outsideWorkingWindow() && !confirm("Clock in outside the 08:30–16:30 Melbourne window?\n\nIt'll still be logged.")) return;
     primaryBtn.disabled = true; primaryBtn.textContent = "Working…";
     try {
       const now = new Date();
       const entryRef = await addDoc(collection(db, "timeEntries"), {
-        uid: user.uid,
-        date: melDateKey(now),
-        clockInUTC: Timestamp.fromDate(now),
-        clockOutUTC: null,
-        hoursWorked: null,
-        breaks: [],
-        breakMinutes: 0,
-        source: "user",
-        createdAt: serverTimestamp()
+        uid: user.uid, date: melDateKey(now),
+        clockInUTC: Timestamp.fromDate(now), clockOutUTC: null, hoursWorked: null,
+        breaks: [], breakMinutes: 0, source: "user", createdAt: serverTimestamp()
       });
       await updateDoc(doc(db, "users", user.uid), {
-        currentEntryId: entryRef.id,
-        clockedInAt: Timestamp.fromDate(now),
-        currentBreakStartAt: null
+        currentEntryId: entryRef.id, clockedInAt: Timestamp.fromDate(now), currentBreakStartAt: null
       });
       currentEntryId = entryRef.id;
       currentStartMs = now.getTime();
       currentBreakStartMs = null;
       priorBreakMs = 0;
       renderShiftState();
-    } catch (ex) {
-      alert("Failed: " + (ex.message || ex.code));
-      renderShiftState();
-    }
+    } catch (ex) { alert("Failed: " + (ex.message || ex.code)); renderShiftState(); }
   }
-
   async function takeBreak() {
     const btn = document.getElementById("secondaryBtn");
     btn.disabled = true; btn.textContent = "Working…";
@@ -392,24 +274,16 @@
       renderShiftState();
     } catch (ex) { alert("Failed: " + (ex.message || ex.code)); renderShiftState(); }
   }
-
   async function resumeWork() {
     primaryBtn.disabled = true; primaryBtn.textContent = "Working…";
     try {
       const now = new Date();
       const breakMs = now.getTime() - currentBreakStartMs;
-      const breakMins = breakMs / 60_000;
-      const newBreak = {
-        startUTC: Timestamp.fromMillis(currentBreakStartMs),
-        endUTC: Timestamp.fromDate(now),
-        minutes: breakMins
-      };
-      // Read current entry to update breakMinutes
       const eSnap = await getDoc(doc(db, "timeEntries", currentEntryId));
       const curMins = eSnap.data().breakMinutes || 0;
       await updateDoc(doc(db, "timeEntries", currentEntryId), {
-        breaks: arrayUnion(newBreak),
-        breakMinutes: curMins + breakMins
+        breaks: arrayUnion({ startUTC: Timestamp.fromMillis(currentBreakStartMs), endUTC: Timestamp.fromDate(now), minutes: breakMs / 60_000 }),
+        breakMinutes: curMins + breakMs / 60_000
       });
       await updateDoc(doc(db, "users", user.uid), { currentBreakStartAt: null });
       priorBreakMs += breakMs;
@@ -417,7 +291,6 @@
       renderShiftState();
     } catch (ex) { alert("Failed: " + (ex.message || ex.code)); renderShiftState(); }
   }
-
   async function endShift() {
     primaryBtn.disabled = true; primaryBtn.textContent = "Working…";
     try {
@@ -429,267 +302,70 @@
       if (currentBreakStartMs) {
         const breakMs = now.getTime() - currentBreakStartMs;
         breakMsFinal += breakMs;
-        breaksArr = [...breaksArr, {
-          startUTC: Timestamp.fromMillis(currentBreakStartMs),
-          endUTC: Timestamp.fromDate(now),
-          minutes: breakMs / 60_000
-        }];
+        breaksArr = [...breaksArr, { startUTC: Timestamp.fromMillis(currentBreakStartMs), endUTC: Timestamp.fromDate(now), minutes: breakMs / 60_000 }];
         breakMinsField += breakMs / 60_000;
       }
-      const totalMs = now.getTime() - currentStartMs;
-      const workMs = totalMs - breakMsFinal;
-      const hours = workMs / 3_600_000;
+      const workMs = now.getTime() - currentStartMs - breakMsFinal;
       await updateDoc(doc(db, "timeEntries", currentEntryId), {
-        clockOutUTC: Timestamp.fromDate(now),
-        hoursWorked: hours,
-        breaks: breaksArr,
-        breakMinutes: breakMinsField
+        clockOutUTC: Timestamp.fromDate(now), hoursWorked: workMs / 3_600_000,
+        breaks: breaksArr, breakMinutes: breakMinsField
       });
-      await updateDoc(doc(db, "users", user.uid), {
-        currentEntryId: null,
-        clockedInAt: null,
-        currentBreakStartAt: null
-      });
-      currentEntryId = null;
-      currentStartMs = null;
-      currentBreakStartMs = null;
-      priorBreakMs = 0;
+      await updateDoc(doc(db, "users", user.uid), { currentEntryId: null, clockedInAt: null, currentBreakStartAt: null });
+      currentEntryId = null; currentStartMs = null; currentBreakStartMs = null; priorBreakMs = 0;
       await refreshTodayMetrics();
-      await refreshRecent();
-      await refreshLeave();
+      await refreshLeavePreview();
       renderShiftState();
     } catch (ex) { alert("Failed: " + (ex.message || ex.code)); renderShiftState(); }
   }
 
   // ====================================================================
-  // RECENT 7 DAYS
+  // LEAVE PREVIEW + STATS
   // ====================================================================
-  async function refreshRecent() {
-    const listEl = document.getElementById("recentList");
-    const keys = lastNDateKeys(7);
-    const oldestKey = keys[keys.length - 1];
-    const snap = await getDocs(query(
-      collection(db, "timeEntries"),
-      where("uid", "==", user.uid),
-      where("date", ">=", oldestKey),
-      orderBy("date", "desc")
-    ));
-    const byDay = {};
-    keys.forEach(k => byDay[k] = 0);
-    snap.forEach(d => {
-      const e = d.data();
-      if (e.hoursWorked && byDay[e.date] !== undefined) byDay[e.date] += e.hoursWorked;
-    });
-    listEl.classList.remove("empty");
-    listEl.innerHTML = keys.map(k => `
-      <div class="day-row">
-        <span class="day-label">${fmtDay(k)}</span>
-        <span class="day-hours">${byDay[k] > 0 ? fmtHours(byDay[k]) : "—"}</span>
-      </div>
-    `).join("");
-  }
-
-  // ====================================================================
-  // EDIT-FIX REQUESTS
-  // ====================================================================
-  async function refreshMyEditRequests() {
-    const listEl = document.getElementById("myEditRequestsList");
-    const snap = await getDocs(query(collection(db, "timeEditRequests"), where("uid", "==", user.uid)));
-    const reqs = [];
-    snap.forEach(d => reqs.push({ id: d.id, ...d.data() }));
-    if (reqs.length === 0) { listEl.innerHTML = ""; return; }
-    reqs.sort((a, b) => (b.submittedAt?.toMillis?.() || 0) - (a.submittedAt?.toMillis?.() || 0));
-    listEl.innerHTML = `
-      <div class="muted" style="font-size:12px; margin-bottom:6px; margin-top:14px">My fix requests</div>
-      <table class="data">
-        <thead><tr><th>Date</th><th>Description</th><th>Status</th></tr></thead>
-        <tbody>${reqs.map(r => {
-          const badge = r.status === "resolved"  ? `<span class="badge ok">Resolved</span>`
-                      : r.status === "dismissed" ? `<span class="badge off">Dismissed</span>`
-                      : `<span class="badge pending">Pending</span>`;
-          const note = r.adminNote ? `<div class="muted" style="font-size:11px; margin-top:4px">Admin: ${escapeHtml(r.adminNote)}</div>` : "";
-          return `<tr>
-            <td>${escapeHtml(r.date)}</td>
-            <td class="muted" style="font-size:13px">${escapeHtml(r.description)}${note}</td>
-            <td>${badge}</td>
-          </tr>`;
-        }).join("")}</tbody>
-      </table>`;
-  }
-
-  document.getElementById("requestFixBtn").addEventListener("click", () => {
-    document.getElementById("fixForm").reset();
-    document.getElementById("fixDate").value = melDateKey();
-    document.getElementById("fixErr").textContent = "";
-    document.getElementById("fixModal").classList.add("open");
-  });
-  document.getElementById("fixCancelBtn").addEventListener("click", () => {
-    document.getElementById("fixModal").classList.remove("open");
-  });
-  document.getElementById("fixForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const btn = document.getElementById("fixSubmitBtn");
-    const errEl = document.getElementById("fixErr");
-    errEl.textContent = "";
-    btn.disabled = true; btn.textContent = "Submitting…";
-    try {
-      await addDoc(collection(db, "timeEditRequests"), {
-        uid: user.uid,
-        contractorName: profile.name || profile.email,
-        date: document.getElementById("fixDate").value,
-        description: document.getElementById("fixDesc").value.trim(),
-        status: "pending",
-        submittedAt: serverTimestamp()
-      });
-      document.getElementById("fixModal").classList.remove("open");
-      refreshMyEditRequests();
-    } catch (ex) { errEl.textContent = "Failed: " + (ex.message || ex.code); }
-    finally { btn.disabled = false; btn.textContent = "Submit"; }
-  });
-
-  // ====================================================================
-  // LEAVE SECTION
-  // ====================================================================
-  async function refreshLeave() {
+  async function refreshLeavePreview() {
     const [teSnap, lrSnap] = await Promise.all([
       getDocs(query(collection(db, "timeEntries"), where("uid", "==", user.uid))),
       getDocs(query(collection(db, "leaveRequests"), where("uid", "==", user.uid)))
     ]);
-    const timeEntries = [];
-    teSnap.forEach(d => timeEntries.push(d.data()));
-    const approved = [];
-    const allRequests = [];
-    let pendingCount = 0;
+    const timeEntries = []; teSnap.forEach(d => timeEntries.push(d.data()));
+    const approved = []; const upcoming = []; let pending = 0;
+    const todayKey = melDateKey();
     lrSnap.forEach(d => {
       const r = { id: d.id, ...d.data() };
-      allRequests.push(r);
-      if (r.status === "approved") approved.push(r);
-      if (r.status === "pending") pendingCount++;
+      if (r.status === "approved") {
+        approved.push(r);
+        if (r.endDate >= todayKey) upcoming.push(r);
+      }
+      if (r.status === "pending") {
+        pending++;
+        if (r.endDate >= todayKey) upcoming.push(r);
+      }
     });
-
     const { accrued, taken, balance } = computeBalance(timeEntries, approved);
-
     document.getElementById("statLeave").textContent = fmtLeave(balance);
     document.getElementById("statLeaveSub").textContent = `accrued ${fmtLeave(accrued)} · taken ${fmtLeave(taken)}`;
-    document.getElementById("statPendingLeave").textContent = pendingCount;
+    document.getElementById("statPendingLeave").textContent = pending;
 
-    const calEntries = [...holidaysAsCalendarEntries(), ...allRequests.map(r => ({
-      id: r.id, startDate: r.startDate, endDate: r.endDate, status: r.status,
-      label: r.status === "approved" ? "Approved" : r.status === "pending" ? "Pending" : r.status === "denied" ? "Denied" : "Cancelled",
-      tooltip: `${r.status.toUpperCase()} · ${fmtLeave(r.hours)}${r.reason ? " · " + r.reason : ""}`
-    }))];
-    renderCalendar(document.getElementById("leaveCalendar"), {
-      entries: calEntries,
-      onClickDay: (dateKey) => openRequestModalForDate(dateKey),
-      onClickEntry: (entry) => { if (!entry.isHoliday) openRequestModalForDate(entry.startDate); }
-    });
-
-    const listEl = document.getElementById("leaveRequestsList");
-    if (allRequests.length === 0) { listEl.classList.add("empty"); listEl.innerHTML = "No requests yet."; return; }
-    allRequests.sort((a, b) => (b.submittedAt?.toMillis?.() || 0) - (a.submittedAt?.toMillis?.() || 0));
+    const listEl = document.getElementById("upcomingLeave");
+    if (upcoming.length === 0) {
+      listEl.classList.add("empty");
+      listEl.innerHTML = "No upcoming leave. Use the Leave tab to request some.";
+      return;
+    }
+    upcoming.sort((a, b) => a.startDate.localeCompare(b.startDate));
     listEl.classList.remove("empty");
     listEl.innerHTML = `<table class="data">
-      <thead><tr><th>Dates</th><th>Hours</th><th>Status</th><th></th></tr></thead>
-      <tbody>${allRequests.map(r => {
+      <thead><tr><th>Dates</th><th>Hours</th><th>Status</th></tr></thead>
+      <tbody>${upcoming.slice(0, 5).map(r => {
         const range = r.startDate === r.endDate ? fmtDay(r.startDate) : `${fmtDay(r.startDate)} → ${fmtDay(r.endDate)}`;
-        const badge = r.status === "approved" ? `<span class="badge ok">Approved</span>`
-                    : r.status === "denied"   ? `<span class="badge bad">Denied</span>`
-                    : r.status === "cancelled" ? `<span class="badge off">Cancelled</span>`
-                    : `<span class="badge pending">Pending</span>`;
-        const cancel = r.status === "pending" ? `<button class="ghost" data-cancel="${r.id}">Cancel</button>` : "";
-        const note = r.adminNote ? `<div class="muted" style="font-size:11px; margin-top:4px">Admin: ${escapeHtml(r.adminNote)}</div>` : "";
-        return `<tr>
-          <td>${range}${r.reason ? `<div class="muted" style="font-size:11px; margin-top:4px">"${escapeHtml(r.reason)}"</div>` : ""}${note}</td>
-          <td>${fmtLeave(r.hours)}</td>
-          <td>${badge}</td>
-          <td>${cancel}</td>
-        </tr>`;
-      }).join("")}</tbody>
-    </table>`;
-    listEl.querySelectorAll("button[data-cancel]").forEach(btn => {
-      btn.addEventListener("click", async () => {
-        if (!confirm("Cancel this pending request?")) return;
-        try {
-          await updateDoc(doc(db, "leaveRequests", btn.dataset.cancel), { status: "cancelled" });
-          refreshLeave();
-        } catch (ex) { alert("Failed: " + (ex.message || ex.code)); }
-      });
-    });
+        const badge = r.status === "approved" ? `<span class="badge ok">Approved</span>` : `<span class="badge pending">Pending</span>`;
+        return `<tr><td>${range}</td><td>${fmtLeave(r.hours)}</td><td>${badge}</td></tr>`;
+      }).join("")}</tbody></table>`;
   }
-
-  // ---- Request leave modal ----
-  const leaveModal = document.getElementById("leaveModal");
-  const leaveStart = document.getElementById("leaveStart");
-  const leaveEnd   = document.getElementById("leaveEnd");
-  const halfStart  = document.getElementById("halfStart");
-  const halfEnd    = document.getElementById("halfEnd");
-  const leaveReason = document.getElementById("leaveReason");
-  const leavePreview = document.getElementById("leavePreview");
-  const leaveErr = document.getElementById("leaveErr");
-
-  function openRequestModalForDate(dateKey) {
-    document.getElementById("leaveForm").reset();
-    leaveStart.value = dateKey || melDateKey();
-    leaveEnd.value   = dateKey || melDateKey();
-    leaveErr.textContent = "";
-    updateLeavePreview();
-    leaveModal.classList.add("open");
-  }
-  document.getElementById("requestLeaveBtn").addEventListener("click", () => openRequestModalForDate());
-  document.getElementById("leaveCancelBtn").addEventListener("click", () => leaveModal.classList.remove("open"));
-
-  function updateLeavePreview() {
-    const s = leaveStart.value, e = leaveEnd.value;
-    if (!s || !e) { leavePreview.textContent = "—"; return; }
-    if (e < s) { leavePreview.innerHTML = `<span style="color:var(--bad)">End date must be on or after start.</span>`; return; }
-    const hrs = leaveHoursFor(s, e, halfStart.checked, halfEnd.checked);
-    const holidays = publicHolidaysInRange(s, e);
-    const balText = document.getElementById("statLeave").textContent;
-    const holidayNote = holidays.length
-      ? `<div class="muted" style="font-size:11px; margin-top:4px">${holidays.length} public holiday${holidays.length > 1 ? "s" : ""} in range — not deducted from balance: ${holidays.map(h => `${h} (${holidayName(h)})`).join(", ")}</div>`
-      : "";
-    leavePreview.innerHTML = `
-      <div><strong>${fmtLeave(hrs)}</strong> requested (${hrs.toFixed(1)} hours, weekdays only)</div>
-      <div class="muted" style="font-size:12px; margin-top:4px">Current available balance: ${balText}</div>
-      ${holidayNote}
-    `;
-  }
-  leaveStart.addEventListener("change", updateLeavePreview);
-  leaveEnd.addEventListener("change", updateLeavePreview);
-  halfStart.addEventListener("change", updateLeavePreview);
-  halfEnd.addEventListener("change", updateLeavePreview);
-
-  document.getElementById("leaveForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    leaveErr.textContent = "";
-    const s = leaveStart.value, en = leaveEnd.value;
-    if (en < s) { leaveErr.textContent = "End date is before start."; return; }
-    const hrs = leaveHoursFor(s, en, halfStart.checked, halfEnd.checked);
-    if (hrs <= 0) { leaveErr.textContent = "That range covers zero working days."; return; }
-    const btn = document.getElementById("leaveSubmitBtn");
-    btn.disabled = true; btn.textContent = "Submitting…";
-    try {
-      await addDoc(collection(db, "leaveRequests"), {
-        uid: user.uid,
-        requesterName: profile.name || profile.email,
-        startDate: s, endDate: en,
-        halfDayStart: halfStart.checked,
-        halfDayEnd: halfEnd.checked,
-        hours: hrs,
-        reason: leaveReason.value.trim(),
-        status: "pending",
-        submittedAt: serverTimestamp()
-      });
-      leaveModal.classList.remove("open");
-      refreshLeave();
-    } catch (ex) { leaveErr.textContent = "Failed: " + (ex.message || ex.code); }
-    finally { btn.disabled = false; btn.textContent = "Submit request"; }
-  });
 
   // ====================================================================
   // INITIAL LOAD
   // ====================================================================
-  async function initDashboard() {
+  async function init() {
     if (currentEntryId) {
       const eSnap = await getDoc(doc(db, "timeEntries", currentEntryId));
       if (eSnap.exists() && !eSnap.data().clockOutUTC) {
@@ -698,22 +374,16 @@
         priorBreakMs = (e.breakMinutes || 0) * 60_000;
       } else {
         currentEntryId = null; currentStartMs = null; currentBreakStartMs = null; priorBreakMs = 0;
-        try { await updateDoc(doc(db, "users", user.uid), { currentEntryId: null, clockedInAt: null, currentBreakStartAt: null }); }
-        catch (e) { console.warn("Could not clear stale state:", e); }
+        try { await updateDoc(doc(db, "users", user.uid), { currentEntryId: null, clockedInAt: null, currentBreakStartAt: null }); } catch {}
       }
     }
-    try { await refreshTodayMetrics(); }     catch (e) { console.error("refreshTodayMetrics:", e); }
-    try { await refreshRecent(); }           catch (e) { console.error("refreshRecent:", e); }
-    try { await refreshMyEditRequests(); }   catch (e) { console.error("refreshMyEditRequests:", e); }
-    try { await refreshLeave(); }            catch (e) { console.error("refreshLeave:", e); }
+    try { await refreshTodayMetrics(); } catch (e) { console.error("refreshTodayMetrics:", e); }
+    try { await refreshLeavePreview(); } catch (e) { console.error("refreshLeavePreview:", e); }
     renderShiftState();
     tickClocks();
     setInterval(tickClocks, 1000);
   }
-  initDashboard().catch(e => {
-    console.error("Dashboard init failed:", e);
-    alert("Dashboard failed to load. Open browser console (F12) for details. Error: " + (e.message || e.code));
-  });
+  init().catch(e => { console.error("Init failed:", e); alert("Dashboard failed to load: " + (e.message || e.code)); });
 </script>
 </body>
 </html>
