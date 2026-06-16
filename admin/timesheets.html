@@ -10,7 +10,16 @@
 <header class="topbar"></header>
 
 <main>
-  <!-- Daily view: all contractors for selected day -->
+  <!-- Pending edit requests from contractors -->
+  <div class="card" id="editRequestsCard" style="display:none">
+    <div class="toolbar">
+      <h2>Pending edit requests</h2>
+      <span class="muted" style="font-size:12px" id="editReqCount"></span>
+    </div>
+    <div id="editRequestsList"></div>
+  </div>
+
+  <!-- Daily view -->
   <div class="card">
     <div class="toolbar">
       <h2>Daily view</h2>
@@ -30,9 +39,7 @@
     <div class="toolbar">
       <h2>Contractor history</h2>
       <div class="row">
-        <select id="userPick" style="min-width:200px">
-          <option value="">— select contractor —</option>
-        </select>
+        <select id="userPick" style="min-width:200px"><option value="">— select contractor —</option></select>
         <select id="rangePick" style="min-width:140px">
           <option value="7">Last 7 days</option>
           <option value="14">Last 14 days</option>
@@ -46,12 +53,63 @@
   </div>
 </main>
 
+<!-- Edit / Add time entry modal -->
+<div class="modal-backdrop" id="entryModal">
+  <div class="modal">
+    <h2 id="entryModalTitle">Edit entry</h2>
+    <form id="entryForm">
+      <input type="hidden" id="entryId">
+      <input type="hidden" id="entryUid">
+      <div id="entryContractorName" style="margin-bottom:10px; font-weight:600"></div>
+      <label>Date</label>
+      <input type="date" id="entryDate" required>
+      <div style="display:flex; gap:10px">
+        <div style="flex:1">
+          <label>Clock in <span class="muted" style="font-size:11px">(Melbourne)</span></label>
+          <input type="time" id="entryStart" required>
+        </div>
+        <div style="flex:1">
+          <label>Clock out <span class="muted" style="font-size:11px">(blank = still open)</span></label>
+          <input type="time" id="entryEnd">
+        </div>
+      </div>
+      <div id="entryHoursPreview" class="muted" style="margin-top:8px; font-size:13px"></div>
+      <div class="error" id="entryErr"></div>
+      <div class="actions" style="justify-content: space-between">
+        <button type="button" class="danger" id="entryDeleteBtn" style="display:none">Delete</button>
+        <div class="actions" style="margin-top:0">
+          <button type="button" class="ghost" id="entryCancelBtn">Cancel</button>
+          <button type="submit">Save</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Resolve edit-request modal -->
+<div class="modal-backdrop" id="resolveModal">
+  <div class="modal">
+    <h2>Edit request</h2>
+    <div id="resolveDetails" style="margin-bottom:12px"></div>
+    <label>Note <span class="muted" style="font-size:11px">(optional, visible to contractor)</span></label>
+    <textarea id="resolveNote" rows="2"></textarea>
+    <div class="error" id="resolveErr"></div>
+    <div class="actions">
+      <button type="button" class="ghost" id="resolveCancelBtn">Cancel</button>
+      <button type="button" class="ghost" id="resolveDismissBtn">Dismiss</button>
+      <button type="button" id="resolveDoneBtn">Mark resolved</button>
+    </div>
+  </div>
+</div>
+
 <script type="module">
   import { db } from "../assets/firebase-init.js";
   import { requireRole } from "../assets/auth-router.js";
   import { renderAdminNav, escapeHtml } from "../assets/admin-nav.js";
-  import { fmtHours, fmtDay, lastNDateKeys, melTimeShort, melDateKey, hoursBetween } from "../assets/time.js";
-  import { collection, query, where, getDocs, orderBy } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+  import { fmtHours, fmtDay, lastNDateKeys, melTimeShort, melDateKey, hoursBetween, MEL_TZ } from "../assets/time.js";
+  import {
+    collection, query, where, getDocs, orderBy, doc, addDoc, updateDoc, deleteDoc, serverTimestamp, Timestamp
+  } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const { profile } = await requireRole("admin");
   renderAdminNav(profile, "timesheets");
@@ -64,26 +122,101 @@
   const historyList = document.getElementById("historyList");
   const summaryEl = document.getElementById("summary");
 
-  // ---- Load contractors once (used by both sections) ----
+  // ---- Load contractors once ----
   const usnap = await getDocs(query(collection(db, "users"), where("role", "==", "contractor")));
   const users = [];
   usnap.forEach(d => users.push({ uid: d.id, ...d.data() }));
   users.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  const usersByUid = Object.fromEntries(users.map(u => [u.uid, u]));
 
-  // Populate dropdown
   userPick.innerHTML = `<option value="">— select contractor —</option>` +
     users.map(u => `<option value="${u.uid}">${escapeHtml(u.name || u.email)}</option>`).join("");
 
-  // ---- Daily view ----
-  dayPick.value = melDateKey();
+  // ===================================================================
+  // PENDING EDIT REQUESTS
+  // ===================================================================
+  async function loadEditRequests() {
+    const cardEl = document.getElementById("editRequestsCard");
+    const listEl = document.getElementById("editRequestsList");
+    const snap = await getDocs(query(collection(db, "timeEditRequests"), where("status", "==", "pending")));
+    const reqs = [];
+    snap.forEach(d => reqs.push({ id: d.id, ...d.data() }));
+    if (reqs.length === 0) { cardEl.style.display = "none"; return; }
+    cardEl.style.display = "block";
+    document.getElementById("editReqCount").textContent = `${reqs.length} waiting`;
+    reqs.sort((a, b) => (a.submittedAt?.toMillis?.() || 0) - (b.submittedAt?.toMillis?.() || 0));
+    listEl.innerHTML = `<table class="data">
+      <thead><tr><th>Contractor</th><th>Date</th><th>Description</th><th>Submitted</th><th></th></tr></thead>
+      <tbody>${reqs.map(r => {
+        const submitted = r.submittedAt?.toDate?.()?.toLocaleString("en-AU", { timeZone: MEL_TZ, hour12: false }) || "—";
+        return `<tr>
+          <td>${escapeHtml(usersByUid[r.uid]?.name || r.contractorName || "—")}</td>
+          <td>${escapeHtml(r.date)}</td>
+          <td class="muted" style="font-size:13px; max-width:340px">${escapeHtml(r.description)}</td>
+          <td class="muted" style="font-size:12px">${submitted}</td>
+          <td><div class="actions"><button data-act="open-day" data-uid="${r.uid}" data-date="${r.date}">Open day</button><button class="ghost" data-act="resolve" data-id="${r.id}">Resolve</button></div></td>
+        </tr>`;
+      }).join("")}</tbody>
+    </table>`;
+    listEl.querySelectorAll("button[data-act]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        if (btn.dataset.act === "open-day") {
+          dayPick.value = btn.dataset.date;
+          userPick.value = btn.dataset.uid;
+          loadDay();
+          loadHistory();
+          dayPick.scrollIntoView({ behavior: "smooth", block: "start" });
+        } else if (btn.dataset.act === "resolve") {
+          openResolve(reqs.find(r => r.id === btn.dataset.id));
+        }
+      });
+    });
+  }
 
+  // Resolve modal
+  let resolveTarget = null;
+  function openResolve(req) {
+    resolveTarget = req;
+    document.getElementById("resolveDetails").innerHTML = `
+      <strong>${escapeHtml(usersByUid[req.uid]?.name || req.contractorName)}</strong>
+      <div class="muted" style="margin-top:4px">${escapeHtml(req.date)}</div>
+      <div style="margin-top:8px">${escapeHtml(req.description)}</div>
+    `;
+    document.getElementById("resolveNote").value = "";
+    document.getElementById("resolveErr").textContent = "";
+    document.getElementById("resolveModal").classList.add("open");
+  }
+  document.getElementById("resolveCancelBtn").addEventListener("click", () => {
+    document.getElementById("resolveModal").classList.remove("open");
+  });
+  document.getElementById("resolveDismissBtn").addEventListener("click", () => decideResolve("dismissed"));
+  document.getElementById("resolveDoneBtn").addEventListener("click", () => decideResolve("resolved"));
+  async function decideResolve(status) {
+    if (!resolveTarget) return;
+    try {
+      await updateDoc(doc(db, "timeEditRequests", resolveTarget.id), {
+        status,
+        adminNote: document.getElementById("resolveNote").value.trim() || null,
+        resolvedAt: serverTimestamp(),
+        resolvedBy: profile.email
+      });
+      document.getElementById("resolveModal").classList.remove("open");
+      loadEditRequests();
+    } catch (ex) {
+      document.getElementById("resolveErr").textContent = "Failed: " + (ex.message || ex.code);
+    }
+  }
+
+  // ===================================================================
+  // DAILY VIEW
+  // ===================================================================
+  dayPick.value = melDateKey();
   function shiftDay(deltaDays) {
     const [y, m, d] = dayPick.value.split("-").map(Number);
     const dt = new Date(Date.UTC(y, m - 1, d) + deltaDays * 86_400_000);
     dayPick.value = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
     loadDay();
   }
-
   document.getElementById("prevDay").addEventListener("click", () => shiftDay(-1));
   document.getElementById("nextDay").addEventListener("click", () => shiftDay(1));
   document.getElementById("todayBtn").addEventListener("click", () => { dayPick.value = melDateKey(); loadDay(); });
@@ -97,122 +230,231 @@
     dayList.classList.remove("empty");
     dayList.innerHTML = `<div class="empty">Loading…</div>`;
 
-    // Single query: all timeEntries on that date
-    const snap = await getDocs(query(
-      collection(db, "timeEntries"),
-      where("date", "==", dateKey)
-    ));
-
-    // Group by uid
+    const snap = await getDocs(query(collection(db, "timeEntries"), where("date", "==", dateKey)));
     const byUid = {};
     snap.forEach(d => {
-      const e = d.data();
+      const e = { id: d.id, ...d.data() };
       if (!byUid[e.uid]) byUid[e.uid] = { hours: 0, sessions: [], openStart: null };
       const bucket = byUid[e.uid];
       const start = e.clockInUTC.toDate();
       const end   = e.clockOutUTC ? e.clockOutUTC.toDate() : null;
-      bucket.sessions.push({ start, end });
+      bucket.sessions.push({ id: e.id, start, end });
       if (end) bucket.hours += e.hoursWorked || 0;
       else bucket.openStart = start;
     });
 
-    // Compose row per contractor (include those with no entries)
     const now = Date.now();
     const rows = users.filter(u => u.active !== false).map(u => {
       const b = byUid[u.uid];
       let statusHtml, hoursHtml;
-
       if (b && b.openStart) {
         const live = isToday ? hoursBetween(b.openStart.getTime(), now) : 0;
-        statusHtml = `
-          <span class="status-pill working">
-            <span class="dot"></span>
-            Working since ${melTimeShort(b.openStart)}
-          </span>`;
+        statusHtml = `<span class="status-pill working"><span class="dot"></span>Working since ${melTimeShort(b.openStart)}</span>`;
         hoursHtml = `<span style="color:#4ade80; font-weight:700">${fmtHours(b.hours + live)}</span>`;
       } else if (b && b.hours > 0) {
-        const lastEnd = b.sessions
-          .filter(s => s.end)
-          .sort((a, c) => c.end - a.end)[0]?.end;
-        statusHtml = `
-          <span class="status-pill done">
-            <span class="dot"></span>
-            Done${lastEnd ? ` · last out ${melTimeShort(lastEnd)}` : ""}
-          </span>`;
+        const lastEnd = b.sessions.filter(s => s.end).sort((a, c) => c.end - a.end)[0]?.end;
+        statusHtml = `<span class="status-pill done"><span class="dot"></span>Done${lastEnd ? ` · last out ${melTimeShort(lastEnd)}` : ""}</span>`;
         hoursHtml = `<strong>${fmtHours(b.hours)}</strong>`;
       } else {
-        statusHtml = `
-          <span class="status-pill none">
-            <span class="dot"></span>
-            No entry
-          </span>`;
+        statusHtml = `<span class="status-pill none"><span class="dot"></span>No entry</span>`;
         hoursHtml = `<span class="muted">—</span>`;
       }
-
       const sessionsHtml = b && b.sessions.length
-        ? `<div class="session-chips">${b.sessions
-            .sort((a, c) => a.start - c.start)
-            .map(s => sessionChip(s)).join("")}</div>`
+        ? `<div class="session-chips">${b.sessions.sort((a, c) => a.start - c.start).map(s => sessionChip(s)).join("")}</div>`
         : `<span class="no-sessions">no sessions</span>`;
-
       return `
         <tr>
           <td><a href="#" data-uid="${u.uid}" class="name-link">${escapeHtml(u.name || u.email)}</a></td>
           <td>${statusHtml}</td>
           <td>${sessionsHtml}</td>
           <td style="text-align:right; font-variant-numeric: tabular-nums">${hoursHtml}</td>
+          <td><button class="ghost" data-add="${u.uid}">+ Add</button></td>
         </tr>
       `;
     });
-
-    function sessionChip(s) {
-      if (!s.end) {
-        return `
-          <span class="session-chip open">
-            <span class="from">${melTimeShort(s.start)}</span>
-            <span class="arr">→</span>
-            <span class="to">still in</span>
-          </span>`;
-      }
-      const dur = hoursBetween(s.start.getTime(), s.end.getTime());
-      return `
-        <span class="session-chip">
-          <span class="from">${melTimeShort(s.start)}</span>
-          <span class="arr">→</span>
-          <span class="to">${melTimeShort(s.end)}</span>
-          <span class="dur">${fmtHours(dur)}</span>
-        </span>`;
-    }
 
     if (rows.length === 0) {
       dayList.innerHTML = `<div class="empty">No active contractors.</div>`;
       return;
     }
+    dayList.innerHTML = `<table class="data">
+      <thead><tr><th>Name</th><th>Status</th><th>Sessions</th><th style="text-align:right">Hours</th><th></th></tr></thead>
+      <tbody>${rows.join("")}</tbody>
+    </table>`;
 
-    dayList.innerHTML = `
-      <table class="data">
-        <thead>
-          <tr><th>Name</th><th>Status</th><th>Sessions</th><th style="text-align:right">Hours</th></tr>
-        </thead>
-        <tbody>${rows.join("")}</tbody>
-      </table>
-    `;
+    function sessionChip(s) {
+      if (!s.end) {
+        return `<span class="session-chip open" data-edit-id="${s.id}">
+          <span class="from">${melTimeShort(s.start)}</span>
+          <span class="arr">→</span>
+          <span class="to">still in</span>
+        </span>`;
+      }
+      const dur = hoursBetween(s.start.getTime(), s.end.getTime());
+      return `<span class="session-chip" data-edit-id="${s.id}">
+        <span class="from">${melTimeShort(s.start)}</span>
+        <span class="arr">→</span>
+        <span class="to">${melTimeShort(s.end)}</span>
+        <span class="dur">${fmtHours(dur)}</span>
+      </span>`;
+    }
 
-    // Click name to drill into history
     dayList.querySelectorAll(".name-link").forEach(a => {
       a.addEventListener("click", (e) => {
         e.preventDefault();
         userPick.value = a.dataset.uid;
         loadHistory();
-        document.querySelector(".card:nth-child(2)").scrollIntoView({ behavior: "smooth", block: "start" });
+        document.querySelector("#userPick").scrollIntoView({ behavior: "smooth", block: "start" });
       });
     });
+    dayList.querySelectorAll(".session-chip[data-edit-id]").forEach(el => {
+      el.addEventListener("click", () => openEditEntry(el.dataset.editId));
+    });
+    dayList.querySelectorAll("button[data-add]").forEach(btn => {
+      btn.addEventListener("click", () => openAddEntry(btn.dataset.add, dateKey));
+    });
   }
-
-  // Re-render once a minute so live "clocked in" hours/timer stay fresh
   setInterval(() => { if (dayPick.value === melDateKey()) loadDay(); }, 60_000);
 
-  // ---- History drill-down ----
+  // ===================================================================
+  // EDIT / ADD ENTRY MODAL
+  // ===================================================================
+  const entryModal = document.getElementById("entryModal");
+  const entryId = document.getElementById("entryId");
+  const entryUid = document.getElementById("entryUid");
+  const entryDate = document.getElementById("entryDate");
+  const entryStart = document.getElementById("entryStart");
+  const entryEnd = document.getElementById("entryEnd");
+  const entryHoursPreview = document.getElementById("entryHoursPreview");
+  const entryErr = document.getElementById("entryErr");
+  const entryDeleteBtn = document.getElementById("entryDeleteBtn");
+
+  document.getElementById("entryCancelBtn").addEventListener("click", () => entryModal.classList.remove("open"));
+
+  function openAddEntry(uid, dateKey) {
+    entryId.value = "";
+    entryUid.value = uid;
+    document.getElementById("entryModalTitle").textContent = "Add entry";
+    document.getElementById("entryContractorName").textContent = usersByUid[uid]?.name || usersByUid[uid]?.email || "";
+    entryDate.value = dateKey;
+    entryStart.value = "08:30";
+    entryEnd.value = "16:30";
+    entryErr.textContent = "";
+    entryDeleteBtn.style.display = "none";
+    updateEntryPreview();
+    entryModal.classList.add("open");
+  }
+
+  async function openEditEntry(id) {
+    const snap = await getDocs(query(collection(db, "timeEntries"), where("__name__", "==", id)));
+    if (snap.empty) return;
+    const e = { id, ...snap.docs[0].data() };
+    entryId.value = id;
+    entryUid.value = e.uid;
+    document.getElementById("entryModalTitle").textContent = "Edit entry";
+    document.getElementById("entryContractorName").textContent = usersByUid[e.uid]?.name || "";
+    entryDate.value = e.date;
+    entryStart.value = melTimeShort(e.clockInUTC.toDate());
+    entryEnd.value = e.clockOutUTC ? melTimeShort(e.clockOutUTC.toDate()) : "";
+    entryErr.textContent = "";
+    entryDeleteBtn.style.display = "inline-block";
+    updateEntryPreview();
+    entryModal.classList.add("open");
+  }
+
+  function updateEntryPreview() {
+    if (!entryDate.value || !entryStart.value) { entryHoursPreview.textContent = ""; return; }
+    const startMs = parseMelTime(entryDate.value, entryStart.value);
+    if (!entryEnd.value) {
+      entryHoursPreview.textContent = "(Open session — no clock-out time)";
+      return;
+    }
+    const endMs = parseMelTime(entryDate.value, entryEnd.value);
+    if (endMs <= startMs) {
+      entryHoursPreview.innerHTML = `<span style="color:var(--bad)">End must be after start.</span>`;
+      return;
+    }
+    const hrs = hoursBetween(startMs, endMs);
+    entryHoursPreview.textContent = `Duration: ${fmtHours(hrs)} (${hrs.toFixed(2)} hours)`;
+  }
+  entryDate.addEventListener("change", updateEntryPreview);
+  entryStart.addEventListener("change", updateEntryPreview);
+  entryEnd.addEventListener("change", updateEntryPreview);
+
+  // Parse "YYYY-MM-DD" + "HH:MM" as Melbourne wall-clock time → UTC millis.
+  function parseMelTime(dateKey, timeStr) {
+    const [y, m, d] = dateKey.split("-").map(Number);
+    const [h, min] = timeStr.split(":").map(Number);
+    // Build a date assuming UTC, then back-out the Melbourne offset by formatting.
+    // Cheap approach: construct as if local, then adjust using the offset reported for that moment in MEL.
+    const guess = new Date(Date.UTC(y, m - 1, d, h, min, 0));
+    // Use Intl to find the offset Melbourne had at this moment
+    const fmt = new Intl.DateTimeFormat("en-US", { timeZone: MEL_TZ, timeZoneName: "shortOffset" });
+    const parts = fmt.formatToParts(guess);
+    const off = parts.find(p => p.type === "timeZoneName")?.value || "GMT+10";
+    const m2 = /GMT([+-])(\d{1,2})(?::?(\d{2}))?/.exec(off);
+    let offsetMin = 0;
+    if (m2) {
+      const sign = m2[1] === "+" ? 1 : -1;
+      offsetMin = sign * (parseInt(m2[2], 10) * 60 + parseInt(m2[3] || "0", 10));
+    }
+    return guess.getTime() - offsetMin * 60_000;
+  }
+
+  document.getElementById("entryForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    entryErr.textContent = "";
+    const dateKey = entryDate.value;
+    const startMs = parseMelTime(dateKey, entryStart.value);
+    let endMs = null;
+    if (entryEnd.value) {
+      endMs = parseMelTime(dateKey, entryEnd.value);
+      if (endMs <= startMs) { entryErr.textContent = "End must be after start."; return; }
+    }
+    const data = {
+      uid: entryUid.value,
+      date: dateKey,
+      clockInUTC: Timestamp.fromMillis(startMs),
+      clockOutUTC: endMs == null ? null : Timestamp.fromMillis(endMs),
+      hoursWorked: endMs == null ? null : hoursBetween(startMs, endMs),
+      source: "admin",
+      lastEditedBy: profile.email,
+      lastEditedAt: serverTimestamp()
+    };
+    try {
+      if (entryId.value) {
+        await updateDoc(doc(db, "timeEntries", entryId.value), data);
+      } else {
+        data.createdAt = serverTimestamp();
+        await addDoc(collection(db, "timeEntries"), data);
+      }
+      entryModal.classList.remove("open");
+      loadDay();
+      if (userPick.value === entryUid.value) loadHistory();
+    } catch (ex) {
+      entryErr.textContent = "Failed: " + (ex.message || ex.code);
+    }
+  });
+
+  entryDeleteBtn.addEventListener("click", async () => {
+    if (!entryId.value) return;
+    if (!confirm("Delete this time entry? This can't be undone.")) return;
+    try {
+      // If the contractor's profile is currently pointing to this open entry, clear it
+      const u = users.find(x => x.currentEntryId === entryId.value);
+      if (u) await updateDoc(doc(db, "users", u.uid), { currentEntryId: null, clockedInAt: null });
+      await deleteDoc(doc(db, "timeEntries", entryId.value));
+      entryModal.classList.remove("open");
+      loadDay();
+      if (userPick.value === entryUid.value) loadHistory();
+    } catch (ex) {
+      entryErr.textContent = "Failed: " + (ex.message || ex.code);
+    }
+  });
+
+  // ===================================================================
+  // HISTORY DRILL-DOWN
+  // ===================================================================
   async function loadHistory() {
     const uid = userPick.value;
     if (!uid) {
@@ -224,7 +466,6 @@
     const n = Number(rangePick.value);
     const keys = lastNDateKeys(n);
     const oldestKey = keys[keys.length - 1];
-
     historyList.classList.remove("empty");
     historyList.innerHTML = `<div class="empty">Loading…</div>`;
 
@@ -234,11 +475,10 @@
       where("date", ">=", oldestKey),
       orderBy("date", "desc")
     ));
-
     const byDay = {};
     keys.forEach(k => byDay[k] = { hours: 0, entries: [] });
     snap.forEach(d => {
-      const e = d.data();
+      const e = { id: d.id, ...d.data() };
       if (!byDay[e.date]) return;
       byDay[e.date].entries.push(e);
       if (e.hoursWorked) byDay[e.date].hours += e.hoursWorked;
@@ -252,47 +492,43 @@
       <div><div style="font-size:11px; text-transform:uppercase; letter-spacing:.06em">Avg / worked day</div><div style="font-size:20px; color:var(--text); font-weight:700">${daysWorked > 0 ? fmtHours(totalHours / daysWorked) : "—"}</div></div>
     `;
 
-    historyList.innerHTML = `
-      <table class="data">
-        <thead>
-          <tr><th>Date</th><th>Sessions</th><th style="text-align:right">Hours</th></tr>
-        </thead>
-        <tbody>
-          ${keys.map(k => {
-            const d = byDay[k];
-            const sessionsHtml = d.entries.length
-              ? `<div class="session-chips">${d.entries
-                  .map(e => ({ start: e.clockInUTC.toDate(), end: e.clockOutUTC ? e.clockOutUTC.toDate() : null }))
-                  .sort((a, c) => a.start - c.start)
-                  .map(s => {
-                    if (!s.end) {
-                      return `<span class="session-chip open">
-                        <span>${melTimeShort(s.start)}</span><span class="arr">→</span><span class="to">still in</span>
-                      </span>`;
-                    }
-                    const dur = hoursBetween(s.start.getTime(), s.end.getTime());
-                    return `<span class="session-chip">
-                      <span>${melTimeShort(s.start)}</span><span class="arr">→</span><span>${melTimeShort(s.end)}</span><span class="dur">${fmtHours(dur)}</span>
-                    </span>`;
-                  }).join("")}</div>`
-              : `<span class="no-sessions">no sessions</span>`;
-            return `
-              <tr>
-                <td>${fmtDay(k)}</td>
-                <td>${sessionsHtml}</td>
-                <td style="text-align:right; font-variant-numeric: tabular-nums">${d.hours > 0 ? `<strong>${fmtHours(d.hours)}</strong>` : "<span class=\"muted\">—</span>"}</td>
-              </tr>
-            `;
-          }).join("")}
-        </tbody>
-      </table>
-    `;
+    historyList.innerHTML = `<table class="data">
+      <thead><tr><th>Date</th><th>Sessions</th><th style="text-align:right">Hours</th><th></th></tr></thead>
+      <tbody>${keys.map(k => {
+        const d = byDay[k];
+        const sessionsHtml = d.entries.length
+          ? `<div class="session-chips">${d.entries.map(e => {
+              const start = e.clockInUTC.toDate();
+              const end = e.clockOutUTC ? e.clockOutUTC.toDate() : null;
+              if (!end) return `<span class="session-chip open" data-edit-id="${e.id}"><span>${melTimeShort(start)}</span><span class="arr">→</span><span class="to">still in</span></span>`;
+              const dur = hoursBetween(start.getTime(), end.getTime());
+              return `<span class="session-chip" data-edit-id="${e.id}"><span>${melTimeShort(start)}</span><span class="arr">→</span><span>${melTimeShort(end)}</span><span class="dur">${fmtHours(dur)}</span></span>`;
+            }).join("")}</div>`
+          : `<span class="no-sessions">no sessions</span>`;
+        return `<tr>
+          <td>${fmtDay(k)}</td>
+          <td>${sessionsHtml}</td>
+          <td style="text-align:right; font-variant-numeric: tabular-nums">${d.hours > 0 ? `<strong>${fmtHours(d.hours)}</strong>` : '<span class="muted">—</span>'}</td>
+          <td><button class="ghost" data-add-history-uid="${uid}" data-add-history-date="${k}">+ Add</button></td>
+        </tr>`;
+      }).join("")}</tbody>
+    </table>`;
+
+    historyList.querySelectorAll(".session-chip[data-edit-id]").forEach(el => {
+      el.addEventListener("click", () => openEditEntry(el.dataset.editId));
+    });
+    historyList.querySelectorAll("button[data-add-history-uid]").forEach(btn => {
+      btn.addEventListener("click", () => openAddEntry(btn.dataset.addHistoryUid, btn.dataset.addHistoryDate));
+    });
   }
 
   userPick.addEventListener("change", loadHistory);
   rangePick.addEventListener("change", loadHistory);
 
-  // ---- Initial load ----
+  // ===================================================================
+  // INITIAL LOAD
+  // ===================================================================
+  loadEditRequests();
   loadDay();
 </script>
 </body>
