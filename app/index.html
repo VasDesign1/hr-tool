@@ -50,6 +50,7 @@
       <div class="value" id="statToday">—</div>
       <div class="sub">of 7h 36m target</div>
       <div class="progress"><div id="statTodayBar" style="width:0%"></div></div>
+      <div class="tile-tip" id="tipToday"></div>
     </div>
     <div class="stat violet">
       <div class="stat-head">
@@ -58,6 +59,7 @@
       </div>
       <div class="value" id="statBreak">—</div>
       <div class="sub">today</div>
+      <div class="tile-tip" id="tipBreak"></div>
     </div>
     <div class="stat cyan">
       <div class="stat-head">
@@ -66,6 +68,7 @@
       </div>
       <div class="value" id="statLeave">—</div>
       <div class="sub" id="statLeaveSub">accrued · taken</div>
+      <div class="tile-tip" id="tipLeave"></div>
     </div>
     <div class="stat amber">
       <div class="stat-head">
@@ -74,6 +77,7 @@
       </div>
       <div class="value" id="statPendingLeave">—</div>
       <div class="sub">awaiting admin</div>
+      <div class="tile-tip" id="tipPending"></div>
     </div>
   </div>
 
@@ -185,8 +189,18 @@
     const todayKey = melDateKey();
     const snap = await getDocs(query(collection(db, "timeEntries"), where("uid", "==", user.uid), where("date", "==", todayKey)));
     todayHoursClosed = 0; todayBreakMinsClosed = 0;
+    const sessions = [];
+    const breakSegments = [];
     snap.forEach(d => {
       const e = d.data();
+      const start = e.clockInUTC?.toDate?.();
+      const end   = e.clockOutUTC?.toDate?.();
+      if (start) sessions.push({ start, end, hours: e.hoursWorked });
+      (e.breaks || []).forEach(b => {
+        if (b.startUTC && b.endUTC) {
+          breakSegments.push({ start: b.startUTC.toDate?.(), end: b.endUTC.toDate?.(), minutes: b.minutes });
+        }
+      });
       if (e.clockOutUTC) {
         todayHoursClosed += e.hoursWorked || 0;
         todayBreakMinsClosed += e.breakMinutes || 0;
@@ -199,6 +213,23 @@
       document.getElementById("statTodayBar").style.width = Math.min(100, (todayHoursClosed / 7.6) * 100) + "%";
       document.getElementById("statBreak").textContent = fmtMinutes(todayBreakMinsClosed);
     }
+
+    // ----- Tile tooltips for Today's hours + Break time -----
+    sessions.sort((a, b) => a.start - b.start);
+    document.getElementById("tipToday").innerHTML = sessions.length
+      ? `<span class="head">Today's sessions</span><ul>${sessions.map(s => {
+          const range = `${melTimeShort(s.start)} → ${s.end ? melTimeShort(s.end) : "still in"}`;
+          const dur   = s.end ? fmtHours((s.end - s.start) / 3_600_000) : "open";
+          return `<li>${range}<span class="right">${dur}</span></li>`;
+        }).join("")}</ul>`
+      : `<span class="head">Today's sessions</span><span class="none">None yet.</span>`;
+
+    breakSegments.sort((a, b) => a.start - b.start);
+    document.getElementById("tipBreak").innerHTML = breakSegments.length
+      ? `<span class="head">Today's breaks</span><ul>${breakSegments.map(b => {
+          return `<li>${melTimeShort(b.start)} → ${melTimeShort(b.end)}<span class="right">${fmtMinutes(b.minutes)}</span></li>`;
+        }).join("")}</ul>`
+      : `<span class="head">Today's breaks</span><span class="none">No breaks taken today.</span>`;
   }
 
   function outsideWorkingWindow() {
