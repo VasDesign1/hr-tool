@@ -59,3 +59,22 @@ export function holidaysAsCalendarEntries() {
 export function holidaysBetween(startKey, endKey) {
   return VIC_HOLIDAYS.filter(h => h.date >= startKey && h.date <= endKey);
 }
+
+// Holiday dates (as YYYY-MM-DD strings) that fall on a weekday within the range.
+// Used in leave-hour preview to show what's auto-skipped.
+export function publicHolidaysInRange(startKey, endKey) {
+  if (!startKey || !endKey || endKey < startKey) return [];
+  const out = [];
+  const [sy, sm, sd] = startKey.split("-").map(Number);
+  const [ey, em, ed] = endKey.split("-").map(Number);
+  let cur = Date.UTC(sy, sm - 1, sd);
+  const end = Date.UTC(ey, em - 1, ed);
+  while (cur <= end) {
+    const d = new Date(cur);
+    const dow = d.getUTCDay();
+    const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,"0")}-${String(d.getUTCDate()).padStart(2,"0")}`;
+    if (dow >= 1 && dow <= 5 && isPublicHoliday(key)) out.push(key);
+    cur += 86_400_000;
+  }
+  return out;
+}
