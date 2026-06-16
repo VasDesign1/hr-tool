@@ -216,20 +216,26 @@
 
     // ----- Tile tooltips for Today's hours + Break time -----
     sessions.sort((a, b) => a.start - b.start);
-    document.getElementById("tipToday").innerHTML = sessions.length
+    setTip("tipToday", sessions.length
       ? `<span class="head">Today's sessions</span><ul>${sessions.map(s => {
           const range = `${melTimeShort(s.start)} → ${s.end ? melTimeShort(s.end) : "still in"}`;
           const dur   = s.end ? fmtHours((s.end - s.start) / 3_600_000) : "open";
           return `<li>${range}<span class="right">${dur}</span></li>`;
         }).join("")}</ul>`
-      : `<span class="head">Today's sessions</span><span class="none">None yet.</span>`;
+      : `<span class="head">Today's sessions</span><span class="none">None yet.</span>`);
 
     breakSegments.sort((a, b) => a.start - b.start);
-    document.getElementById("tipBreak").innerHTML = breakSegments.length
+    setTip("tipBreak", breakSegments.length
       ? `<span class="head">Today's breaks</span><ul>${breakSegments.map(b => {
           return `<li>${melTimeShort(b.start)} → ${melTimeShort(b.end)}<span class="right">${fmtMinutes(b.minutes)}</span></li>`;
         }).join("")}</ul>`
-      : `<span class="head">Today's breaks</span><span class="none">No breaks taken today.</span>`;
+      : `<span class="head">Today's breaks</span><span class="none">No breaks taken today.</span>`);
+  }
+
+  // Defensive setter — silently no-ops if the tile-tip element isn't in the cached HTML.
+  function setTip(id, html) {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = html;
   }
 
   function outsideWorkingWindow() {
@@ -385,9 +391,9 @@
         const range = r.startDate === r.endDate ? fmtDay(r.startDate) : `${fmtDay(r.startDate)} → ${fmtDay(r.endDate)}`;
         return `<li>${range}<span class="right">${fmtLeave(r.hours)}</span></li>`;
       });
-    document.getElementById("tipLeave").innerHTML = takenRows.length
+    setTip("tipLeave", takenRows.length
       ? `<span class="head">Leave taken</span><ul>${takenRows.join("")}</ul>`
-      : `<span class="head">Leave taken</span><span class="none">None yet.</span>`;
+      : `<span class="head">Leave taken</span><span class="none">None yet.</span>`);
 
     const pendingRows = allRequests
       .filter(r => r.status === "pending")
@@ -396,9 +402,9 @@
         const range = r.startDate === r.endDate ? fmtDay(r.startDate) : `${fmtDay(r.startDate)} → ${fmtDay(r.endDate)}`;
         return `<li>${range}<span class="right">${fmtLeave(r.hours)}</span></li>`;
       });
-    document.getElementById("tipPending").innerHTML = pendingRows.length
+    setTip("tipPending", pendingRows.length
       ? `<span class="head">Awaiting admin</span><ul>${pendingRows.join("")}</ul>`
-      : "";
+      : "");
 
     const listEl = document.getElementById("upcomingLeave");
     if (upcoming.length === 0) {

@@ -130,17 +130,18 @@
         document.getElementById("statOnShift").textContent = workingNow.length;
         document.getElementById("statOnBreak").textContent = onBreakNow.length;
 
-        // Tile tooltips: contractor lists
+        // Tile tooltips: contractor lists (defensive — old cached HTML may lack tip divs)
+        const setTip = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
         const namesAll = allContractors.map(c => c.name || c.email).sort();
-        document.getElementById("tipActive").innerHTML = namesAll.length
+        setTip("tipActive", namesAll.length
           ? `<span class="head">Active contractors</span><ul>${namesAll.map(n => `<li>${escapeHtml(n)}</li>`).join("")}</ul>`
-          : "";
-        document.getElementById("tipOnShift").innerHTML = workingNow.length
+          : "");
+        setTip("tipOnShift", workingNow.length
           ? `<span class="head">Currently working</span><ul>${workingNow.map(a => `<li>${escapeHtml(a.name)}<span class="right">since ${melTimeShort(a.start)}</span></li>`).join("")}</ul>`
-          : `<span class="head">Currently working</span><span class="none">Nobody is working right now.</span>`;
-        document.getElementById("tipOnBreak").innerHTML = onBreakNow.length
+          : `<span class="head">Currently working</span><span class="none">Nobody is working right now.</span>`);
+        setTip("tipOnBreak", onBreakNow.length
           ? `<span class="head">On break</span><ul>${onBreakNow.map(a => `<li>${escapeHtml(a.name)}<span class="right">since ${melTimeShort(a.breakStart)}</span></li>`).join("")}</ul>`
-          : `<span class="head">On break</span><span class="none">Nobody is on break.</span>`;
+          : `<span class="head">On break</span><span class="none">Nobody is on break.</span>`);
 
         if (active.length === 0) {
           liveEl.classList.add("empty");
@@ -242,9 +243,10 @@
       .map(c => ({ name: c.name || c.email, hours: hoursByUid[c.uid] || 0 }))
       .filter(r => r.hours > 0)
       .sort((a, b) => b.hours - a.hours);
-    document.getElementById("tipWeekHours").innerHTML = breakdownRows.length
+    const setTip2 = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+    setTip2("tipWeekHours", breakdownRows.length
       ? `<span class="head">Team hours · this week</span><ul>${breakdownRows.map(r => `<li>${escapeHtml(r.name)}<span class="right">${fmtHours(r.hours)}</span></li>`).join("")}</ul>`
-      : `<span class="head">Team hours · this week</span><span class="none">No hours yet this week.</span>`;
+      : `<span class="head">Team hours · this week</span><span class="none">No hours yet this week.</span>`);
 
     const ctx = document.getElementById("weekChart");
     if (window._wkChart) window._wkChart.destroy();
