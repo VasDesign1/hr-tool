@@ -7,38 +7,25 @@
 <link rel="stylesheet" href="../assets/styles.css">
 </head>
 <body>
-<header class="topbar">
-  <h1>HR Tool · Admin</h1>
-  <div>
-    <span class="who" id="who">…</span>
-    <button class="ghost" id="logoutBtn">Sign out</button>
-  </div>
-</header>
+<header class="topbar"></header>
 
 <main>
   <div class="card">
     <h2>Welcome</h2>
-    <p>Signed in as admin. The full admin panel is coming in the next slice — for now this confirms auth, role check, and security rules are wired up.</p>
+    <p>Signed in as admin. Add your contractors from <strong>Users</strong>, then come back here for the live "who's clocked in" board (coming in Slice 3).</p>
   </div>
 
   <div class="card">
-    <h2>Next up</h2>
-    <ul class="muted" style="line-height:1.7">
-      <li>User management (add / edit / deactivate contractors)</li>
-      <li>Live "who's clocked in" board</li>
-      <li>Leave approval queue</li>
-      <li>Timesheet override</li>
-      <li>Pay cycle config + payroll CSV export</li>
-      <li>Settings (working window, leave entitlement, public holidays)</li>
-    </ul>
+    <h2>Quick stats</h2>
+    <div class="placeholder">Active contractors, hours-this-month, pending leave — coming soon.</div>
   </div>
 </main>
 
 <script type="module">
-  import { requireRole, logout } from "../assets/auth-router.js";
+  import { requireRole } from "../assets/auth-router.js";
+  import { renderAdminNav } from "../assets/admin-nav.js";
   const { profile } = await requireRole("admin");
-  document.getElementById("who").textContent = profile.name || profile.email || "Admin";
-  document.getElementById("logoutBtn").addEventListener("click", logout);
+  renderAdminNav(profile, "dashboard");
 </script>
 </body>
 </html>

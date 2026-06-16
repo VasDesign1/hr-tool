@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Users — HR Tool Admin</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<header class="topbar"></header>
+
+<main>
+  <div class="card">
+    <div class="toolbar">
+      <h2>Contractors</h2>
+      <button id="addBtn">+ Add user</button>
+    </div>
+    <div id="listContainer">
+      <div class="empty">Loading…</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="toolbar">
+      <h2>Pending invites</h2>
+    </div>
+    <div id="invitesContainer">
+      <div class="empty">Loading…</div>
+    </div>
+  </div>
+</main>
+
+<!-- Add user modal -->
+<div class="modal-backdrop" id="addModal">
+  <div class="modal">
+    <h2>Invite a contractor</h2>
+    <p class="muted" style="margin-top:-6px">They'll receive an email to set their password and complete signup.</p>
+    <form id="addForm">
+      <label>Full name</label>
+      <input type="text" id="newName" required autocomplete="off">
+      <label>Email</label>
+      <input type="email" id="newEmail" required autocomplete="off">
+      <div class="error" id="addErr"></div>
+      <div class="actions">
+        <button type="button" class="ghost" id="cancelBtn">Cancel</button>
+        <button type="submit" id="sendBtn">Send invite</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Edit user modal -->
+<div class="modal-backdrop" id="editModal">
+  <div class="modal">
+    <h2>Edit user</h2>
+    <form id="editForm">
+      <input type="hidden" id="editUid">
+      <label>Full name</label>
+      <input type="text" id="editName" required>
+      <label>Email <span class="muted" style="font-size:11px">(read-only)</span></label>
+      <input type="email" id="editEmail" readonly disabled>
+      <div class="error" id="editErr"></div>
+      <div class="actions">
+        <button type="button" class="ghost" id="editCancelBtn">Cancel</button>
+        <button type="submit">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script type="module">
+  import { auth, db } from "../assets/firebase-init.js";
+  import { requireRole } from "../assets/auth-router.js";
+  import { renderAdminNav, escapeHtml } from "../assets/admin-nav.js";
+  import {
+    sendSignInLinkToEmail,
+    sendPasswordResetEmail
+  } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+  import {
+    collection, query, where, getDocs, doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp
+  } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+  const { profile } = await requireRole("admin");
+  renderAdminNav(profile, "users");
+
+  const INVITE_LANDING = location.origin + location.pathname.replace(/admin\/users\.html$/, "invite.html");
+
+  // ---- Load lists ----
+  async function loadUsers() {
+    const listEl = document.getElementById("listContainer");
+    listEl.innerHTML = `<div class="empty">Loading…</div>`;
+    const snap = await getDocs(query(collection(db, "users"), where("role", "==", "contractor")));
+    if (snap.empty) {
+      listEl.innerHTML = `<div class="empty">No contractors yet. Click <strong>+ Add user</strong> to invite one.</div>`;
+      return;
+    }
+    const rows = [];
+    snap.forEach(d => {
+      const u = d.data();
+      const status = u.active
+        ? `<span class="badge ok">Active</span>`
+        : `<span class="badge off">Deactivated</span>`;
+      rows.push(`
+        <tr>
+          <td>${escapeHtml(u.name || "—")}</td>
+          <td>${escapeHtml(u.email)}</td>
+          <td>${status}</td>
+          <td>
+            <div class="actions">
+              <button class="ghost" data-act="edit" data-uid="${d.id}">Edit</button>
+              <button class="ghost" data-act="reset" data-email="${escapeHtml(u.email)}">Reset password</button>
+              ${u.active
+                ? `<button class="ghost" data-act="deactivate" data-uid="${d.id}">Deactivate</button>`
+                : `<button class="ghost" data-act="activate" data-uid="${d.id}">Reactivate</button>`}
+            </div>
+          </td>
+        </tr>
+      `);
+    });
+    listEl.innerHTML = `
+      <table class="data">
+        <thead><tr><th>Name</th><th>Email</th><th>Status</th><th></th></tr></thead>
+        <tbody>${rows.join("")}</tbody>
+      </table>
+    `;
+    listEl.querySelectorAll("button[data-act]").forEach(btn => {
+      btn.addEventListener("click", (e) => handleUserAction(btn.dataset.act, btn.dataset));
+    });
+  }
+
+  async function loadInvites() {
+    const listEl = document.getElementById("invitesContainer");
+    listEl.innerHTML = `<div class="empty">Loading…</div>`;
+    const snap = await getDocs(collection(db, "invites"));
+    if (snap.empty) {
+      listEl.innerHTML = `<div class="empty">No pending invites.</div>`;
+      return;
+    }
+    const rows = [];
+    snap.forEach(d => {
+      const inv = d.data();
+      const sent = inv.createdAt?.toDate?.()?.toLocaleString("en-AU", { timeZone: "Australia/Melbourne" }) || "—";
+      rows.push(`
+        <tr>
+          <td>${escapeHtml(inv.name || "—")}</td>
+          <td>${escapeHtml(inv.email)}</td>
+          <td>${sent}</td>
+          <td>
+            <div class="actions">
+              <button class="ghost" data-act="resend" data-email="${escapeHtml(inv.email)}">Resend</button>
+              <button class="ghost" data-act="cancel-invite" data-email="${escapeHtml(inv.email)}">Cancel</button>
+            </div>
+          </td>
+        </tr>
+      `);
+    });
+    listEl.innerHTML = `
+      <table class="data">
+        <thead><tr><th>Name</th><th>Email</th><th>Sent</th><th></th></tr></thead>
+        <tbody>${rows.join("")}</tbody>
+      </table>
+    `;
+    listEl.querySelectorAll("button[data-act]").forEach(btn => {
+      btn.addEventListener("click", (e) => handleInviteAction(btn.dataset.act, btn.dataset));
+    });
+  }
+
+  // ---- Actions ----
+  async function handleUserAction(act, data) {
+    if (act === "edit") {
+      const snap = await getDoc(doc(db, "users", data.uid));
+      const u = snap.data();
+      document.getElementById("editUid").value = data.uid;
+      document.getElementById("editName").value = u.name || "";
+      document.getElementById("editEmail").value = u.email;
+      document.getElementById("editErr").textContent = "";
+      document.getElementById("editModal").classList.add("open");
+    } else if (act === "reset") {
+      if (!confirm(`Send password reset email to ${data.email}?`)) return;
+      try {
+        await sendPasswordResetEmail(auth, data.email);
+        alert("Reset email sent.");
+      } catch (e) { alert("Failed: " + e.message); }
+    } else if (act === "deactivate") {
+      if (!confirm("Deactivate this user? They will be signed out and blocked from signing in until reactivated.")) return;
+      await updateDoc(doc(db, "users", data.uid), { active: false });
+      loadUsers();
+    } else if (act === "activate") {
+      await updateDoc(doc(db, "users", data.uid), { active: true });
+      loadUsers();
+    }
+  }
+
+  async function handleInviteAction(act, data) {
+    if (act === "resend") {
+      try {
+        await sendSignInLinkToEmail(auth, data.email, {
+          url: INVITE_LANDING + "?email=" + encodeURIComponent(data.email),
+          handleCodeInApp: true
+        });
+        alert("Invite re-sent.");
+      } catch (e) { alert("Failed: " + e.message); }
+    } else if (act === "cancel-invite") {
+      if (!confirm("Cancel this invite?")) return;
+      await deleteDoc(doc(db, "invites", data.email));
+      loadInvites();
+    }
+  }
+
+  // ---- Add user modal ----
+  document.getElementById("addBtn").addEventListener("click", () => {
+    document.getElementById("addForm").reset();
+    document.getElementById("addErr").textContent = "";
+    document.getElementById("addModal").classList.add("open");
+  });
+  document.getElementById("cancelBtn").addEventListener("click", () => {
+    document.getElementById("addModal").classList.remove("open");
+  });
+  document.getElementById("editCancelBtn").addEventListener("click", () => {
+    document.getElementById("editModal").classList.remove("open");
+  });
+
+  document.getElementById("addForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = document.getElementById("newName").value.trim();
+    const email = document.getElementById("newEmail").value.trim().toLowerCase();
+    const errEl = document.getElementById("addErr");
+    const sendBtn = document.getElementById("sendBtn");
+    errEl.textContent = "";
+    sendBtn.disabled = true; sendBtn.textContent = "Sending…";
+    try {
+      // Create invite doc first (admin allowed)
+      await setDoc(doc(db, "invites", email), {
+        email, name, role: "contractor", createdAt: serverTimestamp(), invitedBy: profile.email
+      });
+      // Send email link
+      await sendSignInLinkToEmail(auth, email, {
+        url: INVITE_LANDING + "?email=" + encodeURIComponent(email),
+        handleCodeInApp: true
+      });
+      document.getElementById("addModal").classList.remove("open");
+      await loadInvites();
+    } catch (ex) {
+      errEl.textContent = "Failed: " + (ex.message || ex.code);
+    } finally {
+      sendBtn.disabled = false; sendBtn.textContent = "Send invite";
+    }
+  });
+
+  document.getElementById("editForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const uid = document.getElementById("editUid").value;
+    const name = document.getElementById("editName").value.trim();
+    try {
+      await updateDoc(doc(db, "users", uid), { name });
+      document.getElementById("editModal").classList.remove("open");
+      loadUsers();
+    } catch (ex) {
+      document.getElementById("editErr").textContent = "Failed: " + (ex.message || ex.code);
+    }
+  });
+
+  loadUsers();
+  loadInvites();
+</script>
+</body>
+</html>
