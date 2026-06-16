@@ -10,6 +10,21 @@
 <header class="topbar"></header>
 
 <main>
+  <!-- Team calendar -->
+  <div class="card">
+    <div class="toolbar">
+      <h2>Team calendar</h2>
+      <span class="muted" style="font-size:12px">Click any pending entry to approve / deny</span>
+    </div>
+    <div id="teamCalendar"></div>
+    <div class="cal-legend">
+      <span class="lg pending"><span class="swatch"></span>Pending</span>
+      <span class="lg approved"><span class="swatch"></span>Approved</span>
+      <span class="lg denied"><span class="swatch"></span>Denied</span>
+      <span class="lg cancelled"><span class="swatch"></span>Cancelled</span>
+    </div>
+  </div>
+
   <!-- Pending queue -->
   <div class="card">
     <div class="toolbar">
@@ -57,6 +72,7 @@
   import { renderAdminNav, escapeHtml } from "../assets/admin-nav.js";
   import { fmtDay, melDateKey } from "../assets/time.js";
   import { computeBalance, fmtLeave } from "../assets/leave.js";
+  import { renderCalendar } from "../assets/calendar.js";
   import {
     collection, query, where, getDocs, doc, updateDoc, serverTimestamp, orderBy
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
@@ -161,6 +177,7 @@
       loadPending();
       loadUpcoming();
       loadBalances();
+      loadCalendar();
     } catch (ex) {
       document.getElementById("decisionErr").textContent = "Failed: " + (ex.message || ex.code);
     } finally {
@@ -246,6 +263,39 @@
     </table>`;
   }
 
+  // ---- Team calendar ----
+  async function loadCalendar() {
+    const snap = await getDocs(collection(db, "leaveRequests"));
+    const entries = [];
+    snap.forEach(d => {
+      const r = { id: d.id, ...d.data() };
+      if (r.status === "cancelled") return; // hide cancelled from team calendar to reduce clutter
+      const u = usersByUid[r.uid];
+      const shortName = (u?.name || r.requesterName || "?")
+        .split(" ")[0]; // first name only to fit in calendar cell
+      entries.push({
+        id: r.id,
+        startDate: r.startDate,
+        endDate: r.endDate,
+        status: r.status,
+        label: shortName,
+        tooltip: `${u?.name || r.requesterName} · ${r.status.toUpperCase()} · ${fmtLeave(r.hours)}${r.reason ? " · " + r.reason : ""}`,
+        full: r
+      });
+    });
+    renderCalendar(document.getElementById("teamCalendar"), {
+      entries,
+      onClickEntry: (entry) => {
+        if (entry.full.status === "pending") {
+          openDecision("approve", entry.id, entry.full);
+        } else {
+          alert(entry.tooltip);
+        }
+      }
+    });
+  }
+
+  loadCalendar();
   loadPending();
   loadUpcoming();
   loadBalances();

@@ -79,7 +79,18 @@
       </div>
     </div>
 
-    <div style="margin-top:16px">
+    <div style="margin-top:18px">
+      <div class="muted" style="font-size:12px; margin-bottom:8px">Calendar — click a day to request leave for it</div>
+      <div id="leaveCalendar"></div>
+      <div class="cal-legend">
+        <span class="lg pending"><span class="swatch"></span>Pending</span>
+        <span class="lg approved"><span class="swatch"></span>Approved</span>
+        <span class="lg denied"><span class="swatch"></span>Denied</span>
+        <span class="lg cancelled"><span class="swatch"></span>Cancelled</span>
+      </div>
+    </div>
+
+    <div style="margin-top:18px">
       <div class="muted" style="font-size:12px; margin-bottom:6px">My requests</div>
       <div id="leaveRequestsList" class="empty">Loading…</div>
     </div>
@@ -124,6 +135,7 @@
   import {
     leaveHoursFor, computeBalance, fmtLeave, ENTITLEMENT_HOURS, DAILY_HOURS
   } from "../assets/leave.js";
+  import { renderCalendar } from "../assets/calendar.js";
   import {
     collection, query, where, getDocs, addDoc, doc, getDoc, updateDoc, deleteDoc, orderBy, serverTimestamp, Timestamp
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
@@ -288,6 +300,24 @@
     document.getElementById("leaveAccrued").textContent = fmtLeave(accrued);
     document.getElementById("leaveTaken").textContent = fmtLeave(taken);
 
+    // Render leave calendar with all own requests (any status)
+    const calEntries = allRequests.map(r => ({
+      id: r.id,
+      startDate: r.startDate,
+      endDate: r.endDate,
+      status: r.status,
+      label: r.status === "approved"  ? "Approved"
+           : r.status === "pending"   ? "Pending"
+           : r.status === "denied"    ? "Denied"
+           : "Cancelled",
+      tooltip: `${r.status.toUpperCase()} · ${fmtLeave(r.hours)}${r.reason ? " · " + r.reason : ""}`
+    }));
+    renderCalendar(document.getElementById("leaveCalendar"), {
+      entries: calEntries,
+      onClickDay: (dateKey) => openRequestModalForDate(dateKey),
+      onClickEntry: (entry) => openRequestModalForDate(entry.startDate)
+    });
+
     const listEl = document.getElementById("leaveRequestsList");
     if (allRequests.length === 0) {
       listEl.classList.add("empty");
@@ -348,14 +378,17 @@
   const leavePreview = document.getElementById("leavePreview");
   const leaveErr = document.getElementById("leaveErr");
 
-  document.getElementById("requestLeaveBtn").addEventListener("click", () => {
+  function openRequestModalForDate(dateKey) {
     document.getElementById("leaveForm").reset();
-    leaveStart.value = melDateKey();
-    leaveEnd.value = melDateKey();
+    leaveStart.value = dateKey || melDateKey();
+    leaveEnd.value   = dateKey || melDateKey();
     leaveErr.textContent = "";
     updateLeavePreview();
     leaveModal.classList.add("open");
-  });
+    setTimeout(() => leaveEnd.focus(), 50);
+  }
+
+  document.getElementById("requestLeaveBtn").addEventListener("click", () => openRequestModalForDate());
   document.getElementById("leaveCancelBtn").addEventListener("click", () => {
     leaveModal.classList.remove("open");
   });
