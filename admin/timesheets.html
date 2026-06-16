@@ -10,11 +10,29 @@
 <header class="topbar"></header>
 
 <main>
+  <!-- Daily view: all contractors for selected day -->
   <div class="card">
     <div class="toolbar">
-      <h2>Timesheets</h2>
+      <h2>Daily view</h2>
       <div class="row">
-        <select id="userPick" style="min-width:200px"></select>
+        <button class="ghost" id="prevDay">‹ Prev</button>
+        <input type="date" id="dayPick" style="max-width:170px">
+        <button class="ghost" id="nextDay">Next ›</button>
+        <button class="ghost" id="todayBtn">Today</button>
+      </div>
+    </div>
+    <div id="dayLabel" class="muted" style="font-size:13px; margin-bottom:10px"></div>
+    <div id="dayList" class="empty">Loading…</div>
+  </div>
+
+  <!-- History drill-down -->
+  <div class="card">
+    <div class="toolbar">
+      <h2>Contractor history</h2>
+      <div class="row">
+        <select id="userPick" style="min-width:200px">
+          <option value="">— select contractor —</option>
+        </select>
         <select id="rangePick" style="min-width:140px">
           <option value="7">Last 7 days</option>
           <option value="14">Last 14 days</option>
@@ -23,9 +41,8 @@
         </select>
       </div>
     </div>
-
     <div id="summary" class="row" style="gap:24px; margin-bottom:16px; color:var(--muted)"></div>
-    <div id="list" class="empty">Pick a contractor to view.</div>
+    <div id="historyList" class="empty">Pick a contractor above, or click a name in the daily view.</div>
   </div>
 </main>
 
@@ -33,34 +50,135 @@
   import { db } from "../assets/firebase-init.js";
   import { requireRole } from "../assets/auth-router.js";
   import { renderAdminNav, escapeHtml } from "../assets/admin-nav.js";
-  import { fmtHours, fmtDay, lastNDateKeys, melTimeShort } from "../assets/time.js";
+  import { fmtHours, fmtDay, lastNDateKeys, melTimeShort, melDateKey, hoursBetween } from "../assets/time.js";
   import { collection, query, where, getDocs, orderBy } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const { profile } = await requireRole("admin");
   renderAdminNav(profile, "timesheets");
 
-  const userPick = document.getElementById("userPick");
+  const dayPick   = document.getElementById("dayPick");
+  const dayList   = document.getElementById("dayList");
+  const dayLabel  = document.getElementById("dayLabel");
+  const userPick  = document.getElementById("userPick");
   const rangePick = document.getElementById("rangePick");
-  const listEl = document.getElementById("list");
+  const historyList = document.getElementById("historyList");
   const summaryEl = document.getElementById("summary");
 
-  // Populate users
-  const usnap = await getDocs(query(
-    collection(db, "users"),
-    where("role", "==", "contractor")
-  ));
+  // ---- Load contractors once (used by both sections) ----
+  const usnap = await getDocs(query(collection(db, "users"), where("role", "==", "contractor")));
   const users = [];
   usnap.forEach(d => users.push({ uid: d.id, ...d.data() }));
   users.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
+  // Populate dropdown
   userPick.innerHTML = `<option value="">— select contractor —</option>` +
     users.map(u => `<option value="${u.uid}">${escapeHtml(u.name || u.email)}</option>`).join("");
 
-  async function load() {
+  // ---- Daily view ----
+  dayPick.value = melDateKey();
+
+  function shiftDay(deltaDays) {
+    const [y, m, d] = dayPick.value.split("-").map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d) + deltaDays * 86_400_000);
+    dayPick.value = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
+    loadDay();
+  }
+
+  document.getElementById("prevDay").addEventListener("click", () => shiftDay(-1));
+  document.getElementById("nextDay").addEventListener("click", () => shiftDay(1));
+  document.getElementById("todayBtn").addEventListener("click", () => { dayPick.value = melDateKey(); loadDay(); });
+  dayPick.addEventListener("change", loadDay);
+
+  async function loadDay() {
+    const dateKey = dayPick.value;
+    if (!dateKey) return;
+    const isToday = dateKey === melDateKey();
+    dayLabel.textContent = `${fmtDay(dateKey)} — Melbourne${isToday ? " (today)" : ""}`;
+    dayList.classList.remove("empty");
+    dayList.innerHTML = `<div class="empty">Loading…</div>`;
+
+    // Single query: all timeEntries on that date
+    const snap = await getDocs(query(
+      collection(db, "timeEntries"),
+      where("date", "==", dateKey)
+    ));
+
+    // Group by uid
+    const byUid = {};
+    snap.forEach(d => {
+      const e = d.data();
+      if (!byUid[e.uid]) byUid[e.uid] = { hours: 0, sessions: [], openStart: null };
+      const bucket = byUid[e.uid];
+      const start = e.clockInUTC.toDate();
+      const end   = e.clockOutUTC ? e.clockOutUTC.toDate() : null;
+      bucket.sessions.push({ start, end });
+      if (end) bucket.hours += e.hoursWorked || 0;
+      else bucket.openStart = start;
+    });
+
+    // Compose row per contractor (include those with no entries)
+    const now = Date.now();
+    const rows = users.filter(u => u.active !== false).map(u => {
+      const b = byUid[u.uid];
+      let status, hoursText;
+      if (b && b.openStart) {
+        const live = hoursBetween(b.openStart.getTime(), now);
+        status = `<span class="badge ok">Clocked in</span> <span class="muted" style="font-size:12px">since ${melTimeShort(b.openStart)}</span>`;
+        hoursText = `<span class="running" style="color:var(--accent); font-weight:600">${fmtHours(b.hours + (isToday ? live : 0))}</span>`;
+      } else if (b && b.hours > 0) {
+        status = `<span class="badge off">Finished</span>`;
+        hoursText = fmtHours(b.hours);
+      } else {
+        status = `<span class="muted" style="font-size:12px">—</span>`;
+        hoursText = `<span class="muted">—</span>`;
+      }
+      const sessionsText = b
+        ? b.sessions.map(s => `${melTimeShort(s.start)}–${s.end ? melTimeShort(s.end) : "still in"}`).join(" · ")
+        : "";
+      return `
+        <tr>
+          <td><a href="#" data-uid="${u.uid}" class="name-link">${escapeHtml(u.name || u.email)}</a></td>
+          <td>${status}</td>
+          <td class="muted" style="font-size:13px">${sessionsText || "—"}</td>
+          <td style="text-align:right; font-variant-numeric: tabular-nums">${hoursText}</td>
+        </tr>
+      `;
+    });
+
+    if (rows.length === 0) {
+      dayList.innerHTML = `<div class="empty">No active contractors.</div>`;
+      return;
+    }
+
+    dayList.innerHTML = `
+      <table class="data">
+        <thead>
+          <tr><th>Name</th><th>Status</th><th>Sessions</th><th style="text-align:right">Hours</th></tr>
+        </thead>
+        <tbody>${rows.join("")}</tbody>
+      </table>
+    `;
+
+    // Click name to drill into history
+    dayList.querySelectorAll(".name-link").forEach(a => {
+      a.addEventListener("click", (e) => {
+        e.preventDefault();
+        userPick.value = a.dataset.uid;
+        loadHistory();
+        document.querySelector(".card:nth-child(2)").scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+  }
+
+  // Re-render once a minute so live "clocked in" hours/timer stay fresh
+  setInterval(() => { if (dayPick.value === melDateKey()) loadDay(); }, 60_000);
+
+  // ---- History drill-down ----
+  async function loadHistory() {
     const uid = userPick.value;
     if (!uid) {
-      listEl.classList.add("empty");
-      listEl.innerHTML = "Pick a contractor to view.";
+      historyList.classList.add("empty");
+      historyList.innerHTML = "Pick a contractor above, or click a name in the daily view.";
       summaryEl.innerHTML = "";
       return;
     }
@@ -68,8 +186,8 @@
     const keys = lastNDateKeys(n);
     const oldestKey = keys[keys.length - 1];
 
-    listEl.classList.remove("empty");
-    listEl.innerHTML = `<div class="empty">Loading…</div>`;
+    historyList.classList.remove("empty");
+    historyList.innerHTML = `<div class="empty">Loading…</div>`;
 
     const snap = await getDocs(query(
       collection(db, "timeEntries"),
@@ -78,7 +196,6 @@
       orderBy("date", "desc")
     ));
 
-    // Group by day
     const byDay = {};
     keys.forEach(k => byDay[k] = { hours: 0, entries: [] });
     snap.forEach(d => {
@@ -96,7 +213,7 @@
       <div><div style="font-size:11px; text-transform:uppercase; letter-spacing:.06em">Avg / worked day</div><div style="font-size:20px; color:var(--text); font-weight:700">${daysWorked > 0 ? fmtHours(totalHours / daysWorked) : "—"}</div></div>
     `;
 
-    listEl.innerHTML = `
+    historyList.innerHTML = `
       <table class="data">
         <thead>
           <tr><th>Date</th><th>Sessions</th><th style="text-align:right">Hours</th></tr>
@@ -122,8 +239,11 @@
     `;
   }
 
-  userPick.addEventListener("change", load);
-  rangePick.addEventListener("change", load);
+  userPick.addEventListener("change", loadHistory);
+  rangePick.addEventListener("change", loadHistory);
+
+  // ---- Initial load ----
+  loadDay();
 </script>
 </body>
 </html>

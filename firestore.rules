@@ -34,9 +34,10 @@ service cloud.firestore {
     }
 
     // Time entries — user writes own, admin can edit anything.
+    // For list queries: per-doc evaluation of read rule means contractor must always
+    // filter by their own uid; admin passes via isAdmin() branch regardless of filter.
     match /timeEntries/{id} {
       allow read:   if signedIn() && (isAdmin() || resource.data.uid == request.auth.uid);
-      allow list:   if signedIn();
       allow create: if signedIn()
                     && (isAdmin()
                         || (request.resource.data.uid == request.auth.uid
