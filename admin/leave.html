@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Leave — HR Tool Admin</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<header class="topbar"></header>
+
+<main>
+  <!-- Pending queue -->
+  <div class="card">
+    <div class="toolbar">
+      <h2>Pending requests</h2>
+      <span class="muted" style="font-size:13px" id="pendingCount"></span>
+    </div>
+    <div id="pendingList" class="empty">Loading…</div>
+  </div>
+
+  <!-- Upcoming approved -->
+  <div class="card">
+    <div class="toolbar">
+      <h2>Upcoming approved leave</h2>
+    </div>
+    <div id="upcomingList" class="empty">Loading…</div>
+  </div>
+
+  <!-- Balances overview -->
+  <div class="card">
+    <div class="toolbar">
+      <h2>Balances</h2>
+    </div>
+    <div id="balancesList" class="empty">Loading…</div>
+  </div>
+</main>
+
+<!-- Decision modal -->
+<div class="modal-backdrop" id="decisionModal">
+  <div class="modal">
+    <h2 id="decisionTitle">Approve request</h2>
+    <div id="decisionDetails" style="margin-bottom:12px; font-size:14px"></div>
+    <label>Note <span class="muted" style="font-size:11px">(optional, visible to contractor)</span></label>
+    <textarea id="decisionNote" rows="2"></textarea>
+    <div class="error" id="decisionErr"></div>
+    <div class="actions">
+      <button type="button" class="ghost" id="decisionCancel">Cancel</button>
+      <button type="button" id="decisionConfirm">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  import { db } from "../assets/firebase-init.js";
+  import { requireRole } from "../assets/auth-router.js";
+  import { renderAdminNav, escapeHtml } from "../assets/admin-nav.js";
+  import { fmtDay, melDateKey } from "../assets/time.js";
+  import { computeBalance, fmtLeave } from "../assets/leave.js";
+  import {
+    collection, query, where, getDocs, doc, updateDoc, serverTimestamp, orderBy
+  } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+  const { profile } = await requireRole("admin");
+  renderAdminNav(profile, "leave");
+
+  // ---- Load contractors once ----
+  const usnap = await getDocs(query(collection(db, "users"), where("role", "==", "contractor")));
+  const usersByUid = {};
+  usnap.forEach(d => usersByUid[d.id] = { uid: d.id, ...d.data() });
+
+  // ---- Pending queue ----
+  async function loadPending() {
+    const listEl = document.getElementById("pendingList");
+    listEl.innerHTML = `<div class="empty">Loading…</div>`;
+    const snap = await getDocs(query(
+      collection(db, "leaveRequests"),
+      where("status", "==", "pending")
+    ));
+    const reqs = [];
+    snap.forEach(d => reqs.push({ id: d.id, ...d.data() }));
+    reqs.sort((a, b) => (a.submittedAt?.toMillis?.() || 0) - (b.submittedAt?.toMillis?.() || 0));
+
+    document.getElementById("pendingCount").textContent = reqs.length === 0 ? "" : `${reqs.length} waiting`;
+
+    if (reqs.length === 0) {
+      listEl.classList.add("empty");
+      listEl.innerHTML = "No pending requests.";
+      return;
+    }
+    listEl.classList.remove("empty");
+    listEl.innerHTML = `<table class="data">
+      <thead>
+        <tr><th>Contractor</th><th>Dates</th><th>Hours</th><th>Reason</th><th>Submitted</th><th></th></tr>
+      </thead>
+      <tbody>
+        ${reqs.map(r => {
+          const u = usersByUid[r.uid];
+          const range = r.startDate === r.endDate
+            ? fmtDay(r.startDate)
+            : `${fmtDay(r.startDate)} → ${fmtDay(r.endDate)}`;
+          const halfNote = (r.halfDayStart || r.halfDayEnd) ? ` <span class="muted" style="font-size:11px">(½ day)</span>` : "";
+          const submitted = r.submittedAt?.toDate?.()?.toLocaleString("en-AU", { timeZone: "Australia/Melbourne", hour12: false }) || "—";
+          return `<tr>
+            <td>${escapeHtml(u?.name || r.requesterName || "—")}</td>
+            <td>${range}${halfNote}</td>
+            <td>${fmtLeave(r.hours)}</td>
+            <td class="muted" style="font-size:13px; max-width:240px">${escapeHtml(r.reason || "—")}</td>
+            <td class="muted" style="font-size:12px">${submitted}</td>
+            <td>
+              <div class="actions">
+                <button data-act="approve" data-id="${r.id}">Approve</button>
+                <button class="ghost" data-act="deny" data-id="${r.id}">Deny</button>
+              </div>
+            </td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table>`;
+
+    listEl.querySelectorAll("button[data-act]").forEach(btn => {
+      btn.addEventListener("click", () => openDecision(btn.dataset.act, btn.dataset.id, reqs.find(r => r.id === btn.dataset.id)));
+    });
+  }
+
+  // ---- Decision modal ----
+  let pendingDecision = null;
+  function openDecision(act, id, req) {
+    pendingDecision = { act, id };
+    const u = usersByUid[req.uid];
+    document.getElementById("decisionTitle").textContent = act === "approve" ? "Approve request" : "Deny request";
+    const range = req.startDate === req.endDate
+      ? fmtDay(req.startDate)
+      : `${fmtDay(req.startDate)} → ${fmtDay(req.endDate)}`;
+    document.getElementById("decisionDetails").innerHTML = `
+      <strong>${escapeHtml(u?.name || req.requesterName)}</strong>
+      <div class="muted" style="margin-top:4px">${range} · ${fmtLeave(req.hours)}</div>
+      ${req.reason ? `<div class="muted" style="margin-top:6px; font-size:13px">"${escapeHtml(req.reason)}"</div>` : ""}
+    `;
+    document.getElementById("decisionNote").value = "";
+    document.getElementById("decisionErr").textContent = "";
+    document.getElementById("decisionConfirm").textContent = act === "approve" ? "Approve" : "Deny";
+    document.getElementById("decisionConfirm").className = act === "approve" ? "" : "danger";
+    document.getElementById("decisionModal").classList.add("open");
+  }
+  document.getElementById("decisionCancel").addEventListener("click", () => {
+    document.getElementById("decisionModal").classList.remove("open");
+  });
+  document.getElementById("decisionConfirm").addEventListener("click", async () => {
+    if (!pendingDecision) return;
+    const btn = document.getElementById("decisionConfirm");
+    btn.disabled = true;
+    try {
+      await updateDoc(doc(db, "leaveRequests", pendingDecision.id), {
+        status: pendingDecision.act === "approve" ? "approved" : "denied",
+        adminNote: document.getElementById("decisionNote").value.trim() || null,
+        decidedBy: profile.email,
+        decidedAt: serverTimestamp()
+      });
+      document.getElementById("decisionModal").classList.remove("open");
+      loadPending();
+      loadUpcoming();
+      loadBalances();
+    } catch (ex) {
+      document.getElementById("decisionErr").textContent = "Failed: " + (ex.message || ex.code);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // ---- Upcoming approved ----
+  async function loadUpcoming() {
+    const listEl = document.getElementById("upcomingList");
+    listEl.innerHTML = `<div class="empty">Loading…</div>`;
+    const todayKey = melDateKey();
+    const snap = await getDocs(query(
+      collection(db, "leaveRequests"),
+      where("status", "==", "approved")
+    ));
+    const upcoming = [];
+    snap.forEach(d => {
+      const r = { id: d.id, ...d.data() };
+      if (r.endDate >= todayKey) upcoming.push(r);
+    });
+    upcoming.sort((a, b) => a.startDate.localeCompare(b.startDate));
+
+    if (upcoming.length === 0) {
+      listEl.classList.add("empty");
+      listEl.innerHTML = "Nothing approved coming up.";
+      return;
+    }
+    listEl.classList.remove("empty");
+    listEl.innerHTML = `<table class="data">
+      <thead><tr><th>Contractor</th><th>Dates</th><th>Hours</th><th>Reason</th></tr></thead>
+      <tbody>
+        ${upcoming.map(r => {
+          const u = usersByUid[r.uid];
+          const range = r.startDate === r.endDate
+            ? fmtDay(r.startDate)
+            : `${fmtDay(r.startDate)} → ${fmtDay(r.endDate)}`;
+          return `<tr>
+            <td>${escapeHtml(u?.name || r.requesterName || "—")}</td>
+            <td>${range}</td>
+            <td>${fmtLeave(r.hours)}</td>
+            <td class="muted" style="font-size:13px">${escapeHtml(r.reason || "—")}</td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table>`;
+  }
+
+  // ---- Balances (per contractor) ----
+  async function loadBalances() {
+    const listEl = document.getElementById("balancesList");
+    listEl.innerHTML = `<div class="empty">Loading…</div>`;
+    const uids = Object.keys(usersByUid).filter(u => usersByUid[u].active !== false);
+    if (uids.length === 0) {
+      listEl.classList.add("empty");
+      listEl.innerHTML = "No active contractors.";
+      return;
+    }
+    const rows = await Promise.all(uids.map(async (uid) => {
+      const [teSnap, lrSnap] = await Promise.all([
+        getDocs(query(collection(db, "timeEntries"), where("uid", "==", uid))),
+        getDocs(query(collection(db, "leaveRequests"), where("uid", "==", uid), where("status", "==", "approved")))
+      ]);
+      const timeEntries = [];
+      teSnap.forEach(d => timeEntries.push(d.data()));
+      const approved = [];
+      lrSnap.forEach(d => approved.push(d.data()));
+      const b = computeBalance(timeEntries, approved);
+      return { user: usersByUid[uid], ...b };
+    }));
+
+    listEl.classList.remove("empty");
+    listEl.innerHTML = `<table class="data">
+      <thead><tr><th>Contractor</th><th>Available</th><th>Accrued</th><th>Taken</th></tr></thead>
+      <tbody>
+        ${rows.map(r => `<tr>
+          <td>${escapeHtml(r.user.name || r.user.email)}</td>
+          <td><strong>${fmtLeave(r.balance)}</strong></td>
+          <td class="muted">${fmtLeave(r.accrued)}</td>
+          <td class="muted">${fmtLeave(r.taken)}</td>
+        </tr>`).join("")}
+      </tbody>
+    </table>`;
+  }
+
+  loadPending();
+  loadUpcoming();
+  loadBalances();
+</script>
+</body>
+</html>

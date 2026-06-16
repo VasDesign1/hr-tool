@@ -16,6 +16,7 @@
 </header>
 
 <main>
+  <!-- Clock card -->
   <div class="card">
     <div class="clock-panel">
       <div class="clock-block">
@@ -36,6 +37,7 @@
     </div>
   </div>
 
+  <!-- Today + 7 days -->
   <div class="card">
     <h2>Today</h2>
     <div class="row" style="justify-content:space-between">
@@ -54,20 +56,85 @@
     <h2>Last 7 days</h2>
     <div id="recentList" class="empty">Loading…</div>
   </div>
+
+  <!-- Leave -->
+  <div class="card">
+    <div class="toolbar">
+      <h2>Leave</h2>
+      <button id="requestLeaveBtn">Request leave</button>
+    </div>
+
+    <div class="row" style="justify-content:space-between; gap:24px">
+      <div>
+        <div class="muted" style="font-size:12px">Available balance</div>
+        <div style="font-size:26px; font-weight:700" id="leaveBalance">—</div>
+      </div>
+      <div>
+        <div class="muted" style="font-size:12px">Accrued (lifetime)</div>
+        <div style="font-size:20px; color:var(--muted)" id="leaveAccrued">—</div>
+      </div>
+      <div>
+        <div class="muted" style="font-size:12px">Taken</div>
+        <div style="font-size:20px; color:var(--muted)" id="leaveTaken">—</div>
+      </div>
+    </div>
+
+    <div style="margin-top:16px">
+      <div class="muted" style="font-size:12px; margin-bottom:6px">My requests</div>
+      <div id="leaveRequestsList" class="empty">Loading…</div>
+    </div>
+  </div>
 </main>
+
+<!-- Request leave modal -->
+<div class="modal-backdrop" id="leaveModal">
+  <div class="modal">
+    <h2>Request leave</h2>
+    <form id="leaveForm">
+      <label>Start date</label>
+      <input type="date" id="leaveStart" required>
+      <label>End date</label>
+      <input type="date" id="leaveEnd" required>
+      <div style="display:flex; gap:18px; margin-top:10px">
+        <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text); margin:0">
+          <input type="checkbox" id="halfStart" style="width:auto"> Half-day on start date
+        </label>
+        <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text); margin:0">
+          <input type="checkbox" id="halfEnd" style="width:auto"> Half-day on end date
+        </label>
+      </div>
+      <label>Reason / notes <span class="muted" style="font-size:11px">(optional)</span></label>
+      <textarea id="leaveReason" rows="2"></textarea>
+
+      <div id="leavePreview" style="margin-top:14px; padding:12px; background:var(--bg); border:1px solid var(--border); border-radius:8px; font-size:13px"></div>
+
+      <div class="error" id="leaveErr"></div>
+      <div class="actions">
+        <button type="button" class="ghost" id="leaveCancelBtn">Cancel</button>
+        <button type="submit" id="leaveSubmitBtn">Submit request</button>
+      </div>
+    </form>
+  </div>
+</div>
 
 <script type="module">
   import { auth, db } from "../assets/firebase-init.js";
   import { requireRole, logout } from "../assets/auth-router.js";
   import { melClock, localClock, melDateKey, melTimeShort, fmtHours, hoursBetween, fmtDay, lastNDateKeys } from "../assets/time.js";
   import {
-    collection, query, where, getDocs, addDoc, doc, getDoc, updateDoc, orderBy, serverTimestamp, Timestamp
+    leaveHoursFor, computeBalance, fmtLeave, ENTITLEMENT_HOURS, DAILY_HOURS
+  } from "../assets/leave.js";
+  import {
+    collection, query, where, getDocs, addDoc, doc, getDoc, updateDoc, deleteDoc, orderBy, serverTimestamp, Timestamp
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const { user, profile } = await requireRole("contractor");
   document.getElementById("who").textContent = profile.name || profile.email || "";
   document.getElementById("logoutBtn").addEventListener("click", logout);
 
+  // ====================================================================
+  // CLOCK SECTION
+  // ====================================================================
   const shiftBtn    = document.getElementById("shiftBtn");
   const shiftStatus = document.getElementById("shiftStatus");
   const shiftStart  = document.getElementById("shiftStart");
@@ -76,8 +143,8 @@
 
   let currentEntryId = profile.currentEntryId || null;
   let currentStartMs = null;
+  let todayHoursClosed = 0;
 
-  // ---- Real-time clocks ----
   function tickClocks() {
     const now = new Date();
     document.getElementById("melTime").textContent = melClock(now);
@@ -96,8 +163,6 @@
     return `${h}:${m}:${s}`;
   }
 
-  // ---- Today's closed-shift hours (computed once on load + after each clock-out) ----
-  let todayHoursClosed = 0;
   async function refreshToday() {
     const todayKey = melDateKey();
     const snap = await getDocs(query(
@@ -106,22 +171,13 @@
       where("date", "==", todayKey)
     ));
     todayHoursClosed = 0;
-    let openEntry = null;
     snap.forEach(d => {
       const e = d.data();
-      if (e.clockOutUTC) {
-        todayHoursClosed += e.hoursWorked || 0;
-      } else {
-        openEntry = { id: d.id, ...e };
-      }
+      if (e.clockOutUTC) todayHoursClosed += e.hoursWorked || 0;
     });
-    if (!currentEntryId) {
-      todayHrsEl.textContent = fmtHours(todayHoursClosed);
-    }
-    return openEntry;
+    if (!currentEntryId) todayHrsEl.textContent = fmtHours(todayHoursClosed);
   }
 
-  // ---- Render shift state ----
   function renderShiftState() {
     if (currentEntryId) {
       shiftBtn.className = "shift-btn out";
@@ -135,13 +191,11 @@
     shiftBtn.disabled = false;
   }
 
-  // ---- Clock In / Clock Out ----
   shiftBtn.addEventListener("click", async () => {
     shiftBtn.disabled = true;
     shiftBtn.textContent = "Working…";
     try {
       if (!currentEntryId) {
-        // Clock In
         const now = new Date();
         const entryRef = await addDoc(collection(db, "timeEntries"), {
           uid: user.uid,
@@ -160,10 +214,8 @@
         currentStartMs = now.getTime();
         shiftStart.textContent = melTimeShort(now);
       } else {
-        // Clock Out
         const now = new Date();
-        const startMs = currentStartMs;
-        const hours = hoursBetween(startMs, now.getTime());
+        const hours = hoursBetween(currentStartMs, now.getTime());
         await updateDoc(doc(db, "timeEntries", currentEntryId), {
           clockOutUTC: Timestamp.fromDate(now),
           hoursWorked: hours
@@ -176,6 +228,7 @@
         currentStartMs = null;
         await refreshToday();
         await refreshRecent();
+        await refreshLeave();
       }
       renderShiftState();
     } catch (ex) {
@@ -185,7 +238,6 @@
     }
   });
 
-  // ---- Recent 7 days ----
   async function refreshRecent() {
     const listEl = document.getElementById("recentList");
     const keys = lastNDateKeys(7);
@@ -211,15 +263,163 @@
     `).join("");
   }
 
-  // ---- Initial load ----
-  // Trust profile.currentEntryId; if set, fetch its start time.
+  // ====================================================================
+  // LEAVE SECTION
+  // ====================================================================
+  async function refreshLeave() {
+    // Pull all timeEntries + leaveRequests for this user to compute live balance
+    const [teSnap, lrSnap] = await Promise.all([
+      getDocs(query(collection(db, "timeEntries"), where("uid", "==", user.uid))),
+      getDocs(query(collection(db, "leaveRequests"), where("uid", "==", user.uid)))
+    ]);
+    const timeEntries = [];
+    teSnap.forEach(d => timeEntries.push(d.data()));
+    const approved = [];
+    const allRequests = [];
+    lrSnap.forEach(d => {
+      const r = { id: d.id, ...d.data() };
+      allRequests.push(r);
+      if (r.status === "approved") approved.push(r);
+    });
+
+    const { accrued, taken, balance } = computeBalance(timeEntries, approved);
+
+    document.getElementById("leaveBalance").textContent = fmtLeave(balance);
+    document.getElementById("leaveAccrued").textContent = fmtLeave(accrued);
+    document.getElementById("leaveTaken").textContent = fmtLeave(taken);
+
+    const listEl = document.getElementById("leaveRequestsList");
+    if (allRequests.length === 0) {
+      listEl.classList.add("empty");
+      listEl.innerHTML = "No leave requests yet.";
+    } else {
+      allRequests.sort((a, b) => (b.submittedAt?.toMillis?.() || 0) - (a.submittedAt?.toMillis?.() || 0));
+      listEl.classList.remove("empty");
+      listEl.innerHTML = `<table class="data">
+        <thead><tr><th>Dates</th><th>Hours</th><th>Status</th><th></th></tr></thead>
+        <tbody>${allRequests.map(r => {
+          const range = r.startDate === r.endDate
+            ? fmtDay(r.startDate)
+            : `${fmtDay(r.startDate)} → ${fmtDay(r.endDate)}`;
+          const badge = r.status === "approved"  ? `<span class="badge ok">Approved</span>`
+                      : r.status === "denied"    ? `<span class="badge off">Denied</span>`
+                      : r.status === "cancelled" ? `<span class="badge off">Cancelled</span>`
+                      : `<span class="badge pending">Pending</span>`;
+          const cancel = r.status === "pending"
+            ? `<button class="ghost" data-cancel="${r.id}">Cancel</button>`
+            : "";
+          const note = r.adminNote
+            ? `<div class="muted" style="font-size:11px; margin-top:4px">Admin: ${escapeHtml(r.adminNote)}</div>` : "";
+          return `<tr>
+            <td>${range}${r.reason ? `<div class="muted" style="font-size:11px; margin-top:4px">"${escapeHtml(r.reason)}"</div>` : ""}${note}</td>
+            <td>${fmtLeave(r.hours)}</td>
+            <td>${badge}</td>
+            <td>${cancel}</td>
+          </tr>`;
+        }).join("")}</tbody>
+      </table>`;
+      listEl.querySelectorAll("button[data-cancel]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          if (!confirm("Cancel this pending request?")) return;
+          try {
+            await updateDoc(doc(db, "leaveRequests", btn.dataset.cancel), { status: "cancelled" });
+            refreshLeave();
+          } catch (ex) {
+            alert("Failed to cancel: " + (ex.message || ex.code));
+          }
+        });
+      });
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
+  // ---- Request leave modal ----
+  const leaveModal = document.getElementById("leaveModal");
+  const leaveStart = document.getElementById("leaveStart");
+  const leaveEnd   = document.getElementById("leaveEnd");
+  const halfStart  = document.getElementById("halfStart");
+  const halfEnd    = document.getElementById("halfEnd");
+  const leaveReason = document.getElementById("leaveReason");
+  const leavePreview = document.getElementById("leavePreview");
+  const leaveErr = document.getElementById("leaveErr");
+
+  document.getElementById("requestLeaveBtn").addEventListener("click", () => {
+    document.getElementById("leaveForm").reset();
+    leaveStart.value = melDateKey();
+    leaveEnd.value = melDateKey();
+    leaveErr.textContent = "";
+    updateLeavePreview();
+    leaveModal.classList.add("open");
+  });
+  document.getElementById("leaveCancelBtn").addEventListener("click", () => {
+    leaveModal.classList.remove("open");
+  });
+
+  function updateLeavePreview() {
+    const s = leaveStart.value, e = leaveEnd.value;
+    if (!s || !e) { leavePreview.textContent = "—"; return; }
+    if (e < s) {
+      leavePreview.innerHTML = `<span style="color:var(--bad)">End date must be on or after start.</span>`;
+      return;
+    }
+    const hrs = leaveHoursFor(s, e, halfStart.checked, halfEnd.checked);
+    const balText = document.getElementById("leaveBalance").textContent;
+    leavePreview.innerHTML = `
+      <div><strong>${fmtLeave(hrs)}</strong> requested (${hrs.toFixed(1)} hours, weekdays only)</div>
+      <div class="muted" style="font-size:12px; margin-top:4px">Current available balance: ${balText}</div>
+      <div class="muted" style="font-size:11px; margin-top:4px">Public holidays not yet excluded — admin will adjust if needed.</div>
+    `;
+  }
+  leaveStart.addEventListener("change", updateLeavePreview);
+  leaveEnd.addEventListener("change", updateLeavePreview);
+  halfStart.addEventListener("change", updateLeavePreview);
+  halfEnd.addEventListener("change", updateLeavePreview);
+
+  document.getElementById("leaveForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    leaveErr.textContent = "";
+    const s = leaveStart.value, en = leaveEnd.value;
+    if (en < s) { leaveErr.textContent = "End date is before start."; return; }
+    const hrs = leaveHoursFor(s, en, halfStart.checked, halfEnd.checked);
+    if (hrs <= 0) { leaveErr.textContent = "That range covers zero working days."; return; }
+    const btn = document.getElementById("leaveSubmitBtn");
+    btn.disabled = true; btn.textContent = "Submitting…";
+    try {
+      await addDoc(collection(db, "leaveRequests"), {
+        uid: user.uid,
+        requesterName: profile.name || profile.email,
+        startDate: s,
+        endDate: en,
+        halfDayStart: halfStart.checked,
+        halfDayEnd: halfEnd.checked,
+        hours: hrs,
+        reason: leaveReason.value.trim(),
+        status: "pending",
+        submittedAt: serverTimestamp()
+      });
+      leaveModal.classList.remove("open");
+      refreshLeave();
+    } catch (ex) {
+      leaveErr.textContent = "Failed: " + (ex.message || ex.code);
+    } finally {
+      btn.disabled = false; btn.textContent = "Submit request";
+    }
+  });
+
+  // ====================================================================
+  // INITIAL LOAD
+  // ====================================================================
   if (currentEntryId) {
     const eSnap = await getDoc(doc(db, "timeEntries", currentEntryId));
     if (eSnap.exists() && !eSnap.data().clockOutUTC) {
       currentStartMs = eSnap.data().clockInUTC.toDate().getTime();
       shiftStart.textContent = melTimeShort(eSnap.data().clockInUTC.toDate());
     } else {
-      // Stale pointer (e.g. admin closed the shift) — clear it
       currentEntryId = null;
       currentStartMs = null;
       await updateDoc(doc(db, "users", user.uid), { currentEntryId: null, clockedInAt: null });
@@ -227,6 +427,7 @@
   }
   await refreshToday();
   await refreshRecent();
+  await refreshLeave();
   renderShiftState();
   tickClocks();
   setInterval(tickClocks, 1000);
