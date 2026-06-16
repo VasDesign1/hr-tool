@@ -109,9 +109,17 @@
   const users = [];
   usnap.forEach(d => users.push({ uid: d.id, ...d.data() }));
   users.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-  userPick.innerHTML = `<option value="">— select contractor —</option>` +
+  userPick.innerHTML = `<option value="">All contractors</option>` +
     users.map(u => `<option value="${u.uid}">${escapeHtml(u.name || u.email)}</option>`).join("");
-  if (users.length > 0) userPick.value = users[0].uid;
+  // default to "All contractors" so admin sees comparison upfront
+
+  // Color palette — one stable color per contractor for grouped comparison views
+  const PALETTE = ["#047857","#4F46E5","#0891B2","#7C3AED","#D97706","#EC4899"];
+  function contractorColor(uid) {
+    const idx = users.filter(u => u.active !== false).findIndex(u => u.uid === uid);
+    return PALETTE[idx % PALETTE.length] || "#047857";
+  }
+  function firstName(u) { return (u.name || u.email).split(" ")[0]; }
 
   function fmtMinutes(mins) {
     if (mins == null || isNaN(mins) || mins < 1) return "0m";
@@ -144,120 +152,172 @@
   let charts = {};
   function destroy(key) { if (charts[key]) { charts[key].destroy(); charts[key] = null; } }
 
-  async function loadUserAnalytics() {
-    const uid = userPick.value;
-    const n = Number(rangePick.value);
-    if (!uid) return;
-
-    const keys = lastNDateKeys(n);
-    const oldestKey = keys[keys.length - 1];
-    const todayKey  = keys[0];
-
+  // Pull entries for a single uid in range
+  async function entriesInRange(uid, oldestKey, todayKey) {
     const teSnap = await getDocs(query(collection(db, "timeEntries"), where("uid", "==", uid)));
     const entries = [];
     teSnap.forEach(d => entries.push(d.data()));
-    const inRange = entries.filter(e => e.date >= oldestKey && e.date <= todayKey);
+    return entries.filter(e => e.date >= oldestKey && e.date <= todayKey);
+  }
 
-    // KPIs
-    let totalHours = 0, totalBreakMins = 0;
-    const daySet = new Set();
-    inRange.forEach(e => {
-      if (e.hoursWorked) totalHours += e.hoursWorked;
-      if (e.hoursWorked) daySet.add(e.date);
-      if (e.breakMinutes) totalBreakMins += e.breakMinutes;
-    });
-    document.getElementById("kpiHours").textContent = fmtHours(totalHours);
-    document.getElementById("kpiHoursSub").textContent = `last ${n} days`;
-    document.getElementById("kpiDays").textContent = daySet.size;
-    document.getElementById("kpiDaysSub").textContent = `of ${n}`;
-    document.getElementById("kpiAvg").textContent = daySet.size > 0 ? fmtHours(totalHours / daySet.size) : "—";
-    document.getElementById("kpiBreak").textContent = fmtMinutes(totalBreakMins);
+  async function loadUserAnalytics() {
+    const uid = userPick.value;       // "" => All contractors
+    const n   = Number(rangePick.value);
+    const keys = lastNDateKeys(n);
+    const oldestKey = keys[keys.length - 1];
+    const todayKey  = keys[0];
+    const activeUsers = users.filter(u => u.active !== false);
+    if (activeUsers.length === 0) return;
 
-    // Daily chart — last N days, oldest → newest (grouped worked + break)
     const orderedKeys = [...keys].reverse();
-    const dailyData = {};
-    const breakData = {};
-    orderedKeys.forEach(k => { dailyData[k] = 0; breakData[k] = 0; });
-    inRange.forEach(e => {
-      if (e.hoursWorked && dailyData[e.date] !== undefined) dailyData[e.date] += e.hoursWorked;
-      if (e.breakMinutes && breakData[e.date] !== undefined) breakData[e.date] += e.breakMinutes / 60;
-    });
-    destroy("daily");
+    const hourLabels  = Array.from({ length: 16 }, (_, i) => `${i + 5}:00`);
     const barW = n > 60 ? 8 : n > 30 ? 12 : 18;
-    charts.daily = new Chart(document.getElementById("dailyChart"), {
-      type: "bar",
-      data: {
-        labels: orderedKeys.map(k => k.slice(5)),
-        datasets: [
-          {
-            label: "Hours worked",
-            data: orderedKeys.map(k => Number(dailyData[k].toFixed(2))),
-            backgroundColor: "#04785799",
-            borderColor: "#047857", borderWidth: 1, borderRadius: 4, maxBarThickness: barW
-          },
-          {
-            label: "Break time",
-            data: orderedKeys.map(k => Number(breakData[k].toFixed(2))),
-            backgroundColor: "#7C3AED99",
-            borderColor: "#7C3AED", borderWidth: 1, borderRadius: 4, maxBarThickness: barW
-          }
-        ]
-      },
-      options: chartBase("Hours", true)
-    });
+
+    if (uid) {
+      // ─── Single contractor: grouped Worked + Break ──────────────────
+      const inRange = await entriesInRange(uid, oldestKey, todayKey);
+
+      let totalHours = 0, totalBreakMins = 0;
+      const daySet = new Set();
+      inRange.forEach(e => {
+        if (e.hoursWorked) { totalHours += e.hoursWorked; daySet.add(e.date); }
+        if (e.breakMinutes) totalBreakMins += e.breakMinutes;
+      });
+      document.getElementById("kpiHours").textContent = fmtHours(totalHours);
+      document.getElementById("kpiHoursSub").textContent = `last ${n} days`;
+      document.getElementById("kpiDays").textContent = daySet.size;
+      document.getElementById("kpiDaysSub").textContent = `of ${n}`;
+      document.getElementById("kpiAvg").textContent = daySet.size > 0 ? fmtHours(totalHours / daySet.size) : "—";
+      document.getElementById("kpiBreak").textContent = fmtMinutes(totalBreakMins);
+
+      const dailyData = {}, breakData = {};
+      orderedKeys.forEach(k => { dailyData[k] = 0; breakData[k] = 0; });
+      inRange.forEach(e => {
+        if (e.hoursWorked && dailyData[e.date] !== undefined) dailyData[e.date] += e.hoursWorked;
+        if (e.breakMinutes && breakData[e.date] !== undefined) breakData[e.date] += e.breakMinutes / 60;
+      });
+      destroy("daily");
+      charts.daily = new Chart(document.getElementById("dailyChart"), {
+        type: "bar",
+        data: {
+          labels: orderedKeys.map(k => k.slice(5)),
+          datasets: [
+            { label: "Hours worked", data: orderedKeys.map(k => Number(dailyData[k].toFixed(2))), backgroundColor: "#04785799", borderColor: "#047857", borderWidth: 1, borderRadius: 4, maxBarThickness: barW },
+            { label: "Break time",   data: orderedKeys.map(k => Number(breakData[k].toFixed(2))), backgroundColor: "#7C3AED99", borderColor: "#7C3AED", borderWidth: 1, borderRadius: 4, maxBarThickness: barW }
+          ]
+        },
+        options: chartBase("Hours", true)
+      });
+
+      const buckets = new Array(16).fill(0);
+      inRange.forEach(e => {
+        const start = e.clockInUTC?.toDate?.(); if (!start) return;
+        const h = Number(start.toLocaleTimeString("en-AU", { timeZone: MEL_TZ, hour12: false, hour: "2-digit" }));
+        if (h >= 5 && h <= 20) buckets[h - 5]++;
+      });
+      destroy("clockIn");
+      charts.clockIn = new Chart(document.getElementById("clockInChart"), {
+        type: "bar",
+        data: { labels: hourLabels, datasets: [{ label: "Clock-ins", data: buckets, backgroundColor: "#4F46E599", borderColor: "#4F46E5", borderWidth: 1, borderRadius: 6, maxBarThickness: 28 }] },
+        options: chartBase("Sessions")
+      });
+
+      const dowSum = new Array(7).fill(0), dowDays = new Array(7).fill(0), seen = new Map();
+      inRange.forEach(e => {
+        if (!e.hoursWorked) return;
+        const [y, m, d] = e.date.split("-").map(Number);
+        const dow = (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7;
+        dowSum[dow] += e.hoursWorked;
+        if (!seen.has(e.date)) { seen.set(e.date, dow); dowDays[dow]++; }
+      });
+      const dowAvg = dowSum.map((s, i) => dowDays[i] > 0 ? s / dowDays[i] : 0);
+      destroy("dow");
+      charts.dow = new Chart(document.getElementById("dowChart"), {
+        type: "bar",
+        data: { labels: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], datasets: [{ label: "Avg hours", data: dowAvg.map(v => Number(v.toFixed(2))), backgroundColor: "#0891B299", borderColor: "#0891B2", borderWidth: 1, borderRadius: 6, maxBarThickness: 60 }] },
+        options: chartBase("Avg hours / day")
+      });
+
+    } else {
+      // ─── All contractors: grouped per-contractor across each axis ──────
+      const perUserEntries = await Promise.all(activeUsers.map(u => entriesInRange(u.uid, oldestKey, todayKey)));
+
+      // KPIs aggregate across team
+      let teamHours = 0, teamBreak = 0;
+      const daySet = new Set();
+      perUserEntries.forEach(arr => arr.forEach(e => {
+        if (e.hoursWorked) { teamHours += e.hoursWorked; daySet.add(e.date); }
+        if (e.breakMinutes) teamBreak += e.breakMinutes;
+      }));
+      document.getElementById("kpiHours").textContent = fmtHours(teamHours);
+      document.getElementById("kpiHoursSub").textContent = `team · last ${n} days`;
+      document.getElementById("kpiDays").textContent = daySet.size;
+      document.getElementById("kpiDaysSub").textContent = `unique days`;
+      document.getElementById("kpiAvg").textContent = daySet.size > 0 ? fmtHours(teamHours / daySet.size) : "—";
+      document.getElementById("kpiBreak").textContent = fmtMinutes(teamBreak);
+
+      // Daily chart — grouped: one dataset per contractor
+      const dailyDatasets = activeUsers.map((u, i) => {
+        const data = {};
+        orderedKeys.forEach(k => data[k] = 0);
+        perUserEntries[i].forEach(e => {
+          if (e.hoursWorked && data[e.date] !== undefined) data[e.date] += e.hoursWorked;
+        });
+        const c = contractorColor(u.uid);
+        return {
+          label: firstName(u),
+          data: orderedKeys.map(k => Number(data[k].toFixed(2))),
+          backgroundColor: c + "99", borderColor: c, borderWidth: 1, borderRadius: 4, maxBarThickness: barW
+        };
+      });
+      destroy("daily");
+      charts.daily = new Chart(document.getElementById("dailyChart"), {
+        type: "bar",
+        data: { labels: orderedKeys.map(k => k.slice(5)), datasets: dailyDatasets },
+        options: chartBase("Hours", true)
+      });
+
+      // Clock-in chart — grouped: one dataset per contractor
+      const clockInDatasets = activeUsers.map((u, i) => {
+        const buckets = new Array(16).fill(0);
+        perUserEntries[i].forEach(e => {
+          const start = e.clockInUTC?.toDate?.(); if (!start) return;
+          const h = Number(start.toLocaleTimeString("en-AU", { timeZone: MEL_TZ, hour12: false, hour: "2-digit" }));
+          if (h >= 5 && h <= 20) buckets[h - 5]++;
+        });
+        const c = contractorColor(u.uid);
+        return { label: firstName(u), data: buckets, backgroundColor: c + "99", borderColor: c, borderWidth: 1, borderRadius: 4, maxBarThickness: 22 };
+      });
+      destroy("clockIn");
+      charts.clockIn = new Chart(document.getElementById("clockInChart"), {
+        type: "bar",
+        data: { labels: hourLabels, datasets: clockInDatasets },
+        options: chartBase("Sessions", true)
+      });
+
+      // Day-of-week chart — grouped per contractor (avg hours / day)
+      const dowDatasets = activeUsers.map((u, i) => {
+        const dowSum = new Array(7).fill(0), dowDays = new Array(7).fill(0), seen = new Map();
+        perUserEntries[i].forEach(e => {
+          if (!e.hoursWorked) return;
+          const [y, m, d] = e.date.split("-").map(Number);
+          const dow = (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7;
+          dowSum[dow] += e.hoursWorked;
+          if (!seen.has(e.date)) { seen.set(e.date, dow); dowDays[dow]++; }
+        });
+        const avg = dowSum.map((s, j) => dowDays[j] > 0 ? Number((s / dowDays[j]).toFixed(2)) : 0);
+        const c = contractorColor(u.uid);
+        return { label: firstName(u), data: avg, backgroundColor: c + "99", borderColor: c, borderWidth: 1, borderRadius: 4, maxBarThickness: 32 };
+      });
+      destroy("dow");
+      charts.dow = new Chart(document.getElementById("dowChart"), {
+        type: "bar",
+        data: { labels: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], datasets: dowDatasets },
+        options: chartBase("Avg hours / day", true)
+      });
+    }
+
     document.getElementById("dailyMeta").textContent = `${oldestKey} → ${todayKey}`;
-
-    // Clock-in time distribution (hour buckets 5–20)
-    const buckets = new Array(16).fill(0); // index 0 = 5am, 15 = 8pm
-    inRange.forEach(e => {
-      const start = e.clockInUTC?.toDate?.();
-      if (!start) return;
-      const hourStr = start.toLocaleTimeString("en-AU", { timeZone: MEL_TZ, hour12: false, hour: "2-digit" });
-      const h = Number(hourStr);
-      if (h >= 5 && h <= 20) buckets[h - 5]++;
-    });
-    const hourLabels = Array.from({ length: 16 }, (_, i) => `${i + 5}:00`);
-    destroy("clockIn");
-    charts.clockIn = new Chart(document.getElementById("clockInChart"), {
-      type: "bar",
-      data: {
-        labels: hourLabels,
-        datasets: [{
-          label: "Clock-ins",
-          data: buckets,
-          backgroundColor: "#4F46E599",
-          borderColor: "#4F46E5", borderWidth: 1, borderRadius: 6, maxBarThickness: 28
-        }]
-      },
-      options: chartBase("Sessions")
-    });
-
-    // Day-of-week average hours
-    const dowSum = new Array(7).fill(0), dowDays = new Array(7).fill(0);
-    const seenDayDow = new Map(); // date -> dow, so we count each calendar day once
-    inRange.forEach(e => {
-      if (!e.hoursWorked) return;
-      const [y, m, d] = e.date.split("-").map(Number);
-      const dt = new Date(Date.UTC(y, m - 1, d));
-      const dow = (dt.getUTCDay() + 6) % 7; // Mon=0
-      dowSum[dow] += e.hoursWorked;
-      if (!seenDayDow.has(e.date)) { seenDayDow.set(e.date, dow); dowDays[dow]++; }
-    });
-    const dowAvg = dowSum.map((s, i) => dowDays[i] > 0 ? s / dowDays[i] : 0);
-    destroy("dow");
-    charts.dow = new Chart(document.getElementById("dowChart"), {
-      type: "bar",
-      data: {
-        labels: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],
-        datasets: [{
-          label: "Avg hours",
-          data: dowAvg.map(v => Number(v.toFixed(2))),
-          backgroundColor: "#0891B299",
-          borderColor: "#0891B2", borderWidth: 1, borderRadius: 6, maxBarThickness: 60
-        }]
-      },
-      options: chartBase("Avg hours / day")
-    });
   }
 
   async function loadTeamChart() {
