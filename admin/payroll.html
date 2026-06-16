@@ -85,39 +85,43 @@
 
     const active = contractors.filter(c => c.active !== false);
 
-    // Hours per contractor: query timeEntries by date range
-    const hoursByUid = {};
-    const rows = await Promise.all(active.map(async (c) => {
-      const teSnap = await getDocs(query(
-        collection(db, "timeEntries"),
-        where("uid", "==", c.uid),
-        where("date", ">=", period.start),
-        where("date", "<=", period.end)
-      ));
-      let hours = 0;
-      teSnap.forEach(d => {
-        const e = d.data();
-        if (e.hoursWorked) hours += e.hoursWorked;
-      });
-      hoursByUid[c.uid] = hours;
+    let rows;
+    try {
+      // Hours per contractor: filter date range in JS to avoid composite-index dependency
+      rows = await Promise.all(active.map(async (c) => {
+        const teSnap = await getDocs(query(
+          collection(db, "timeEntries"),
+          where("uid", "==", c.uid)
+        ));
+        let hours = 0;
+        teSnap.forEach(d => {
+          const e = d.data();
+          if (e.date >= period.start && e.date <= period.end && e.hoursWorked) {
+            hours += e.hoursWorked;
+          }
+        });
 
-      // Existing payPeriod doc?
-      const ppId = periodIdFor(c.uid, period);
-      const ppSnap = await getDoc(doc(db, "payPeriods", ppId));
-      const pp = ppSnap.exists() ? ppSnap.data() : null;
+        const ppId = periodIdFor(c.uid, period);
+        const ppSnap = await getDoc(doc(db, "payPeriods", ppId));
+        const pp = ppSnap.exists() ? ppSnap.data() : null;
 
-      return {
-        uid: c.uid,
-        name: c.name || c.email,
-        email: c.email,
-        payAmount: c.payAmount ?? 0,
-        hoursWorked: pp ? pp.hoursWorked : hours,
-        grossAmount: pp ? pp.grossAmount : (c.payAmount ?? 0),
-        status: pp ? pp.status : "draft",
-        finalisedAt: pp?.finalisedAt,
-        paidAt: pp?.paidAt
-      };
-    }));
+        return {
+          uid: c.uid,
+          name: c.name || c.email,
+          email: c.email,
+          payAmount: c.payAmount ?? 0,
+          hoursWorked: pp ? pp.hoursWorked : hours,
+          grossAmount: pp ? pp.grossAmount : (c.payAmount ?? 0),
+          status: pp ? pp.status : "draft",
+          finalisedAt: pp?.finalisedAt,
+          paidAt: pp?.paidAt
+        };
+      }));
+    } catch (ex) {
+      console.error("Payroll load failed:", ex);
+      tableEl.innerHTML = `<div class="empty" style="color:var(--bad)">Could not load: ${escapeHtml(ex.message || ex.code || String(ex))}</div>`;
+      return;
+    }
     currentRows = rows;
 
     const totalHours = rows.reduce((s, r) => s + r.hoursWorked, 0);
