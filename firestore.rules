@@ -20,7 +20,7 @@ service cloud.firestore {
 
     // Fields a contractor is allowed to self-update on their own profile.
     function userSelfEditableKeys() {
-      return ['mustChangePassword', 'updatedAt', 'currentEntryId', 'clockedInAt'];
+      return ['mustChangePassword', 'updatedAt', 'currentEntryId', 'clockedInAt', 'currentBreakStartAt'];
     }
 
     match /users/{uid} {

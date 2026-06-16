@@ -2,22 +2,27 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Admin — HR Tool</title>
+<title>Dashboard — Vic Air HR</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../assets/styles.css">
 </head>
 <body>
 <header class="topbar"></header>
 
 <main>
-  <div class="card">
-    <h2>Who's clocked in</h2>
-    <div id="liveList" class="empty">Loading…</div>
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Dashboard</h1>
+      <div class="page-subtitle" id="todaySub">—</div>
+    </div>
   </div>
 
   <div class="card">
-    <h2>Quick stats</h2>
-    <div class="placeholder">Total hours-this-month and pending leave counts coming with Slice 4.</div>
+    <h2>Who's clocked in</h2>
+    <div id="liveList" class="empty">Loading…</div>
   </div>
 </main>
 
@@ -30,6 +35,9 @@
 
   const { profile } = await requireRole("admin");
   renderAdminNav(profile, "dashboard");
+
+  document.getElementById("todaySub").textContent =
+    new Date().toLocaleDateString("en-AU", { timeZone: "Australia/Melbourne", weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
   const liveEl = document.getElementById("liveList");
 
@@ -50,15 +58,20 @@
           return;
         }
         liveEl.classList.remove("empty");
-        liveEl.innerHTML = `<div class="live-list">${active.map(a => `
+        liveEl.innerHTML = `<div class="live-list">${active.map(a => {
+          const initials = (a.name || "?").split(/[\s@]+/).filter(Boolean).slice(0,2).map(s=>s[0]).join("").toUpperCase().slice(0,2);
+          return `
           <div class="live-row" data-start="${a.start.getTime()}">
-            <div>
-              <div class="name">${escapeHtml(a.name)}</div>
-              <div class="since">since ${melTimeShort(a.start)} Melbourne</div>
+            <div class="who">
+              <div class="avatar">${initials || "?"}</div>
+              <div>
+                <div class="name">${escapeHtml(a.name)}</div>
+                <div class="since">since ${melTimeShort(a.start)} Melbourne</div>
+              </div>
             </div>
             <div class="elapsed" data-elapsed>—</div>
-          </div>
-        `).join("")}</div>`;
+          </div>`;
+        }).join("")}</div>`;
         tickElapsed();
       },
       (err) => { console.error("Live board:", err); }

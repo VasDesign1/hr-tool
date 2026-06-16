@@ -2,69 +2,87 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Profile — HR Tool</title>
+<title>Profile — Vic Air HR</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../assets/styles.css">
 </head>
 <body>
-<header class="topbar">
-  <div class="nav-left">
-    <h1>HR Tool</h1>
-    <nav class="admin-nav">
-      <a class="nav-link" href="index.html">Dashboard</a>
-      <a class="nav-link active" href="profile.html">Profile</a>
-    </nav>
-  </div>
-  <div class="nav-right">
-    <span class="who" id="who">…</span>
-    <button class="ghost" id="logoutBtn">Sign out</button>
-  </div>
-</header>
+<div class="simple-shell">
 
-<main>
+  <header class="simple-header">
+    <div class="brand-row">
+      <div class="logo">V</div>
+      <div class="name">Vic Air<small>HR Portal</small></div>
+    </div>
+    <nav class="simple-nav">
+      <a href="index.html">Dashboard</a>
+      <a class="active" href="profile.html">Profile</a>
+    </nav>
+    <div class="header-user">
+      <div class="avatar" id="avatar">?</div>
+      <div>
+        <div class="name" id="who">…</div>
+        <div class="role">Contractor</div>
+      </div>
+      <button class="ghost" id="logoutBtn">Sign out</button>
+    </div>
+  </header>
+
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Profile</h1>
+      <div class="page-subtitle">Your account details and password</div>
+    </div>
+  </div>
+
   <div class="card">
     <h2>My details</h2>
-    <div class="row" style="gap:32px; flex-wrap:wrap">
+    <div class="row" style="gap:32px; flex-wrap:wrap; padding:4px 0">
       <div>
-        <div class="muted" style="font-size:12px">Name</div>
-        <div style="font-size:18px; font-weight:600" id="profileName">—</div>
+        <div class="muted" style="font-size:12px; text-transform:uppercase; letter-spacing:.06em; font-weight:600">Name</div>
+        <div style="font-size:18px; font-weight:600; margin-top:4px" id="profileName">—</div>
       </div>
       <div>
-        <div class="muted" style="font-size:12px">Email</div>
-        <div style="font-size:18px" id="profileEmail">—</div>
+        <div class="muted" style="font-size:12px; text-transform:uppercase; letter-spacing:.06em; font-weight:600">Email</div>
+        <div style="font-size:18px; margin-top:4px" id="profileEmail">—</div>
       </div>
       <div>
-        <div class="muted" style="font-size:12px">Start date</div>
-        <div style="font-size:18px" id="profileStart">—</div>
+        <div class="muted" style="font-size:12px; text-transform:uppercase; letter-spacing:.06em; font-weight:600">Start date</div>
+        <div style="font-size:18px; margin-top:4px" id="profileStart">—</div>
       </div>
     </div>
-    <div class="muted" style="font-size:12px; margin-top:14px">To change your name or email, ask admin.</div>
+    <div class="muted" style="font-size:12px; margin-top:16px">To change your name or email, ask admin.</div>
   </div>
 
   <div class="card">
     <h2>Change password</h2>
-    <form id="pwForm" style="max-width:420px">
+    <form id="pwForm" style="max-width:440px">
       <label>Current password</label>
       <input type="password" id="curPw" required autocomplete="current-password">
       <label>New password</label>
       <input type="password" id="newPw" required minlength="8" autocomplete="new-password" placeholder="At least 8 characters">
       <label>Confirm new password</label>
       <input type="password" id="confirmPw" required minlength="8" autocomplete="new-password">
-      <div style="margin-top:16px"><button type="submit" id="saveBtn">Save new password</button></div>
+      <div style="margin-top:18px"><button type="submit" id="saveBtn">Save new password</button></div>
       <div class="error" id="pwErr"></div>
     </form>
   </div>
-</main>
+</div>
 
 <script type="module">
   import { auth, db } from "../assets/firebase-init.js";
   import { requireRole, logout } from "../assets/auth-router.js";
+  import { getInitials } from "../assets/admin-nav.js";
   import {
     EmailAuthProvider, reauthenticateWithCredential, updatePassword
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 
   const { user, profile } = await requireRole("contractor");
   document.getElementById("who").textContent = profile.name || profile.email || "";
+  document.getElementById("avatar").textContent = getInitials(profile.name || profile.email);
   document.getElementById("logoutBtn").addEventListener("click", logout);
 
   document.getElementById("profileName").textContent  = profile.name || "—";
