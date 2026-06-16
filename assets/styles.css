@@ -172,6 +172,97 @@ table.data td .actions button {
 .live-row .since { color: var(--muted); font-size: 13px; }
 .live-row .elapsed { color: var(--ok); font-weight: 600; font-variant-numeric: tabular-nums; }
 
+/* Clickable contractor name */
+a.name-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+a.name-link:hover { text-decoration: underline; color: #7dd3fc; }
+
+table.data tbody tr:hover { background: rgba(56,189,248,.04); }
+
+/* Status pills */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.status-pill .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-pill.working {
+  background: rgba(34,197,94,.15);
+  color: #4ade80;
+}
+.status-pill.working .dot {
+  background: #22c55e;
+  box-shadow: 0 0 0 0 rgba(34,197,94,.6);
+  animation: pulse-dot 2s infinite;
+}
+.status-pill.done {
+  background: rgba(148,163,184,.15);
+  color: #cbd5e1;
+}
+.status-pill.done .dot { background: var(--muted); }
+.status-pill.none {
+  background: transparent;
+  color: var(--muted);
+  opacity: .65;
+}
+.status-pill.none .dot {
+  background: transparent;
+  border: 1px solid var(--muted);
+}
+@keyframes pulse-dot {
+  0%   { box-shadow: 0 0 0 0   rgba(34,197,94,.55); }
+  70%  { box-shadow: 0 0 0 7px rgba(34,197,94,0);   }
+  100% { box-shadow: 0 0 0 0   rgba(34,197,94,0);   }
+}
+
+/* Session chips */
+.session-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.session-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.session-chip .arr { color: var(--muted); font-family: inherit; }
+.session-chip .dur {
+  color: var(--muted);
+  padding-left: 8px;
+  margin-left: 2px;
+  border-left: 1px solid var(--border);
+  font-size: 11px;
+}
+.session-chip.open {
+  border-color: rgba(34,197,94,.5);
+  background: rgba(34,197,94,.07);
+}
+.session-chip.open .to { color: #4ade80; font-weight: 600; }
+.session-chip.open .dur { color: #4ade80; border-left-color: rgba(34,197,94,.3); }
+
+.no-sessions { color: var(--muted); font-size: 12px; font-style: italic; }
+
 main { padding: 24px; max-width: 1100px; margin: 0 auto; }
 
 .card {

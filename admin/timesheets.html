@@ -120,30 +120,69 @@
     const now = Date.now();
     const rows = users.filter(u => u.active !== false).map(u => {
       const b = byUid[u.uid];
-      let status, hoursText;
+      let statusHtml, hoursHtml;
+
       if (b && b.openStart) {
-        const live = hoursBetween(b.openStart.getTime(), now);
-        status = `<span class="badge ok">Clocked in</span> <span class="muted" style="font-size:12px">since ${melTimeShort(b.openStart)}</span>`;
-        hoursText = `<span class="running" style="color:var(--accent); font-weight:600">${fmtHours(b.hours + (isToday ? live : 0))}</span>`;
+        const live = isToday ? hoursBetween(b.openStart.getTime(), now) : 0;
+        statusHtml = `
+          <span class="status-pill working">
+            <span class="dot"></span>
+            Working since ${melTimeShort(b.openStart)}
+          </span>`;
+        hoursHtml = `<span style="color:#4ade80; font-weight:700">${fmtHours(b.hours + live)}</span>`;
       } else if (b && b.hours > 0) {
-        status = `<span class="badge off">Finished</span>`;
-        hoursText = fmtHours(b.hours);
+        const lastEnd = b.sessions
+          .filter(s => s.end)
+          .sort((a, c) => c.end - a.end)[0]?.end;
+        statusHtml = `
+          <span class="status-pill done">
+            <span class="dot"></span>
+            Done${lastEnd ? ` · last out ${melTimeShort(lastEnd)}` : ""}
+          </span>`;
+        hoursHtml = `<strong>${fmtHours(b.hours)}</strong>`;
       } else {
-        status = `<span class="muted" style="font-size:12px">—</span>`;
-        hoursText = `<span class="muted">—</span>`;
+        statusHtml = `
+          <span class="status-pill none">
+            <span class="dot"></span>
+            No entry
+          </span>`;
+        hoursHtml = `<span class="muted">—</span>`;
       }
-      const sessionsText = b
-        ? b.sessions.map(s => `${melTimeShort(s.start)}–${s.end ? melTimeShort(s.end) : "still in"}`).join(" · ")
-        : "";
+
+      const sessionsHtml = b && b.sessions.length
+        ? `<div class="session-chips">${b.sessions
+            .sort((a, c) => a.start - c.start)
+            .map(s => sessionChip(s)).join("")}</div>`
+        : `<span class="no-sessions">no sessions</span>`;
+
       return `
         <tr>
           <td><a href="#" data-uid="${u.uid}" class="name-link">${escapeHtml(u.name || u.email)}</a></td>
-          <td>${status}</td>
-          <td class="muted" style="font-size:13px">${sessionsText || "—"}</td>
-          <td style="text-align:right; font-variant-numeric: tabular-nums">${hoursText}</td>
+          <td>${statusHtml}</td>
+          <td>${sessionsHtml}</td>
+          <td style="text-align:right; font-variant-numeric: tabular-nums">${hoursHtml}</td>
         </tr>
       `;
     });
+
+    function sessionChip(s) {
+      if (!s.end) {
+        return `
+          <span class="session-chip open">
+            <span class="from">${melTimeShort(s.start)}</span>
+            <span class="arr">→</span>
+            <span class="to">still in</span>
+          </span>`;
+      }
+      const dur = hoursBetween(s.start.getTime(), s.end.getTime());
+      return `
+        <span class="session-chip">
+          <span class="from">${melTimeShort(s.start)}</span>
+          <span class="arr">→</span>
+          <span class="to">${melTimeShort(s.end)}</span>
+          <span class="dur">${fmtHours(dur)}</span>
+        </span>`;
+    }
 
     if (rows.length === 0) {
       dayList.innerHTML = `<div class="empty">No active contractors.</div>`;
@@ -221,16 +260,27 @@
         <tbody>
           ${keys.map(k => {
             const d = byDay[k];
-            const sessions = d.entries.map(e => {
-              const start = e.clockInUTC.toDate();
-              const end = e.clockOutUTC ? e.clockOutUTC.toDate() : null;
-              return `${melTimeShort(start)}–${end ? melTimeShort(end) : "still in"}`;
-            }).join(" · ");
+            const sessionsHtml = d.entries.length
+              ? `<div class="session-chips">${d.entries
+                  .map(e => ({ start: e.clockInUTC.toDate(), end: e.clockOutUTC ? e.clockOutUTC.toDate() : null }))
+                  .sort((a, c) => a.start - c.start)
+                  .map(s => {
+                    if (!s.end) {
+                      return `<span class="session-chip open">
+                        <span>${melTimeShort(s.start)}</span><span class="arr">→</span><span class="to">still in</span>
+                      </span>`;
+                    }
+                    const dur = hoursBetween(s.start.getTime(), s.end.getTime());
+                    return `<span class="session-chip">
+                      <span>${melTimeShort(s.start)}</span><span class="arr">→</span><span>${melTimeShort(s.end)}</span><span class="dur">${fmtHours(dur)}</span>
+                    </span>`;
+                  }).join("")}</div>`
+              : `<span class="no-sessions">no sessions</span>`;
             return `
               <tr>
                 <td>${fmtDay(k)}</td>
-                <td class="muted" style="font-size:13px">${sessions || "—"}</td>
-                <td style="text-align:right; font-variant-numeric: tabular-nums">${d.hours > 0 ? fmtHours(d.hours) : "—"}</td>
+                <td>${sessionsHtml}</td>
+                <td style="text-align:right; font-variant-numeric: tabular-nums">${d.hours > 0 ? `<strong>${fmtHours(d.hours)}</strong>` : "<span class=\"muted\">—</span>"}</td>
               </tr>
             `;
           }).join("")}
