@@ -563,24 +563,36 @@
   // ====================================================================
   // INITIAL LOAD
   // ====================================================================
-  if (currentEntryId) {
-    const eSnap = await getDoc(doc(db, "timeEntries", currentEntryId));
-    if (eSnap.exists() && !eSnap.data().clockOutUTC) {
-      currentStartMs = eSnap.data().clockInUTC.toDate().getTime();
-      shiftStart.textContent = melTimeShort(eSnap.data().clockInUTC.toDate());
-    } else {
-      currentEntryId = null;
-      currentStartMs = null;
-      await updateDoc(doc(db, "users", user.uid), { currentEntryId: null, clockedInAt: null });
+  async function initDashboard() {
+    if (currentEntryId) {
+      const eSnap = await getDoc(doc(db, "timeEntries", currentEntryId));
+      if (eSnap.exists() && !eSnap.data().clockOutUTC) {
+        currentStartMs = eSnap.data().clockInUTC.toDate().getTime();
+        shiftStart.textContent = melTimeShort(eSnap.data().clockInUTC.toDate());
+      } else {
+        currentEntryId = null;
+        currentStartMs = null;
+        try {
+          await updateDoc(doc(db, "users", user.uid), { currentEntryId: null, clockedInAt: null });
+        } catch (e) { console.warn("Could not clear stale currentEntryId:", e); }
+      }
     }
+    // Each section gets its own try/catch so one failure doesn't break the page.
+    try { await refreshToday(); }            catch (e) { console.error("refreshToday:", e); }
+    try { await refreshRecent(); }           catch (e) { console.error("refreshRecent:", e); document.getElementById("recentList").innerHTML = `<div class="empty" style="color:var(--bad)">Could not load: ${e.message || e.code}</div>`; }
+    try { await refreshMyEditRequests(); }   catch (e) { console.error("refreshMyEditRequests:", e); }
+    try { await refreshLeave(); }            catch (e) { console.error("refreshLeave:", e); document.getElementById("leaveRequestsList").innerHTML = `<div class="empty" style="color:var(--bad)">Could not load: ${e.message || e.code}</div>`; }
+    renderShiftState();
+    tickClocks();
+    setInterval(tickClocks, 1000);
   }
-  await refreshToday();
-  await refreshRecent();
-  await refreshMyEditRequests();
-  await refreshLeave();
-  renderShiftState();
-  tickClocks();
-  setInterval(tickClocks, 1000);
+  initDashboard().catch(e => {
+    console.error("Dashboard init failed:", e);
+    alert("Dashboard failed to load. Open browser console (F12) for details. Error: " + (e.message || e.code));
+    shiftBtn.textContent = "Reload page";
+    shiftBtn.disabled = false;
+    shiftBtn.addEventListener("click", () => location.reload());
+  });
 </script>
 </body>
 </html>
