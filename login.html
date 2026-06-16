@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign in — HR Tool</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+<div class="login-shell">
+  <div class="login-card">
+    <h1>HR Tool</h1>
+    <p class="sub">Vic Air contractor portal</p>
+
+    <form id="loginForm">
+      <label>Email</label>
+      <input type="email" id="email" required autocomplete="username">
+      <label>Password</label>
+      <input type="password" id="password" required autocomplete="current-password">
+      <div style="margin-top:18px"><button type="submit" id="submitBtn" style="width:100%">Sign in</button></div>
+      <div class="error" id="err"></div>
+      <div style="margin-top:14px; text-align:center">
+        <a href="#" id="forgot" class="muted" style="font-size:13px">Forgot password?</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script type="module">
+  import { auth } from "./assets/firebase-init.js";
+  import {
+    signInWithEmailAndPassword,
+    sendPasswordResetEmail,
+    onAuthStateChanged
+  } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+
+  const errEl = document.getElementById("err");
+  const form = document.getElementById("loginForm");
+  const btn = document.getElementById("submitBtn");
+
+  onAuthStateChanged(auth, (u) => { if (u) location.replace("./"); });
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    errEl.textContent = "";
+    btn.disabled = true; btn.textContent = "Signing in…";
+    try {
+      await signInWithEmailAndPassword(
+        auth,
+        document.getElementById("email").value.trim(),
+        document.getElementById("password").value
+      );
+      location.replace("./");
+    } catch (ex) {
+      errEl.textContent = friendly(ex.code);
+      btn.disabled = false; btn.textContent = "Sign in";
+    }
+  });
+
+  document.getElementById("forgot").addEventListener("click", async (e) => {
+    e.preventDefault();
+    const email = document.getElementById("email").value.trim();
+    if (!email) { errEl.textContent = "Enter your email first."; return; }
+    try {
+      await sendPasswordResetEmail(auth, email);
+      errEl.style.color = "var(--ok)";
+      errEl.textContent = "Reset email sent. Check your inbox.";
+    } catch (ex) {
+      errEl.textContent = friendly(ex.code);
+    }
+  });
+
+  function friendly(code) {
+    switch (code) {
+      case "auth/invalid-email": return "That email looks invalid.";
+      case "auth/user-not-found":
+      case "auth/wrong-password":
+      case "auth/invalid-credential": return "Email or password is wrong.";
+      case "auth/too-many-requests": return "Too many attempts. Try again later.";
+      case "auth/network-request-failed": return "Network problem. Check connection.";
+      default: return "Sign-in failed. " + (code || "");
+    }
+  }
+</script>
+</body>
+</html>

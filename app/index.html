@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>My HR — HR Tool</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>HR Tool</h1>
+  <div>
+    <span class="who" id="who">…</span>
+    <button class="ghost" id="logoutBtn">Sign out</button>
+  </div>
+</header>
+
+<main>
+  <div class="card">
+    <h2>Today</h2>
+    <div class="row" style="justify-content:space-between">
+      <div>
+        <div class="muted" style="font-size:12px">Melbourne</div>
+        <div class="big-clock" id="melTime">—</div>
+      </div>
+      <div>
+        <div class="muted" style="font-size:12px">Your local</div>
+        <div class="big-clock" id="localTime">—</div>
+      </div>
+    </div>
+    <div class="placeholder" style="margin-top:18px">Clock In / Clock Out — coming next slice.</div>
+  </div>
+
+  <div class="card">
+    <h2>Coming soon</h2>
+    <ul class="muted" style="line-height:1.7">
+      <li>Clock In / Clock Out + today's hours</li>
+      <li>Timesheet (week / month)</li>
+      <li>Leave balance + request form</li>
+      <li>Payslips</li>
+    </ul>
+  </div>
+</main>
+
+<script type="module">
+  import { requireRole, logout } from "../assets/auth-router.js";
+  const { profile } = await requireRole("contractor");
+  document.getElementById("who").textContent = profile.name || profile.email || "Contractor";
+  document.getElementById("logoutBtn").addEventListener("click", logout);
+
+  function tick() {
+    const now = new Date();
+    document.getElementById("melTime").textContent =
+      now.toLocaleTimeString("en-AU", { timeZone: "Australia/Melbourne", hour12: false });
+    document.getElementById("localTime").textContent =
+      now.toLocaleTimeString([], { hour12: false });
+  }
+  tick(); setInterval(tick, 1000);
+</script>
+</body>
+</html>

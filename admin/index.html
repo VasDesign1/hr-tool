@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Admin — HR Tool</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>HR Tool · Admin</h1>
+  <div>
+    <span class="who" id="who">…</span>
+    <button class="ghost" id="logoutBtn">Sign out</button>
+  </div>
+</header>
+
+<main>
+  <div class="card">
+    <h2>Welcome</h2>
+    <p>Signed in as admin. The full admin panel is coming in the next slice — for now this confirms auth, role check, and security rules are wired up.</p>
+  </div>
+
+  <div class="card">
+    <h2>Next up</h2>
+    <ul class="muted" style="line-height:1.7">
+      <li>User management (add / edit / deactivate contractors)</li>
+      <li>Live "who's clocked in" board</li>
+      <li>Leave approval queue</li>
+      <li>Timesheet override</li>
+      <li>Pay cycle config + payroll CSV export</li>
+      <li>Settings (working window, leave entitlement, public holidays)</li>
+    </ul>
+  </div>
+</main>
+
+<script type="module">
+  import { requireRole, logout } from "../assets/auth-router.js";
+  const { profile } = await requireRole("admin");
+  document.getElementById("who").textContent = profile.name || profile.email || "Admin";
+  document.getElementById("logoutBtn").addEventListener("click", logout);
+</script>
+</body>
+</html>

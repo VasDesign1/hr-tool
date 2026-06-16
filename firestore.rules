@@ -1,0 +1,66 @@
+rules_version = '2';
+
+// HR Tool — admin has master rights; contractors only touch their own data.
+service cloud.firestore {
+  match /databases/{db}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && exists(/databases/$(db)/documents/users/$(request.auth.uid))
+        && get(/databases/$(db)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    // Users — admin manages all; user can read own profile.
+    match /users/{uid} {
+      allow read:   if isSelf(uid) || isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Time entries — user writes own, admin can edit anything.
+    match /timeEntries/{id} {
+      allow read:   if signedIn() && (isAdmin() || resource.data.uid == request.auth.uid);
+      allow create: if signedIn() && (isAdmin() || request.resource.data.uid == request.auth.uid);
+      allow update, delete: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid && resource.data.editable == true);
+    }
+
+    // Leave requests — user submits own; admin approves/denies.
+    match /leaveRequests/{id} {
+      allow read:   if signedIn() && (isAdmin() || resource.data.uid == request.auth.uid);
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid
+                                && request.resource.data.status == 'pending';
+      allow update: if isAdmin()
+                    || (signedIn()
+                        && resource.data.uid == request.auth.uid
+                        && resource.data.status == 'pending');
+      allow delete: if isAdmin();
+    }
+
+    // Leave ledger — admin-managed; user reads own.
+    match /leaveLedger/{uid}/entries/{id} {
+      allow read: if isSelf(uid) || isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // Pay periods — admin-managed; user reads own.
+    match /payPeriods/{id} {
+      allow read: if signedIn() && (isAdmin() || resource.data.uid == request.auth.uid);
+      allow write: if isAdmin();
+    }
+
+    // Global settings — everyone signed in can read; only admin writes.
+    match /settings/{doc} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+  }
+}
