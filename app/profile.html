@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Profile — HR Tool</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="nav-left">
+    <h1>HR Tool</h1>
+    <nav class="admin-nav">
+      <a class="nav-link" href="index.html">Dashboard</a>
+      <a class="nav-link active" href="profile.html">Profile</a>
+    </nav>
+  </div>
+  <div class="nav-right">
+    <span class="who" id="who">…</span>
+    <button class="ghost" id="logoutBtn">Sign out</button>
+  </div>
+</header>
+
+<main>
+  <div class="card">
+    <h2>My details</h2>
+    <div class="row" style="gap:32px; flex-wrap:wrap">
+      <div>
+        <div class="muted" style="font-size:12px">Name</div>
+        <div style="font-size:18px; font-weight:600" id="profileName">—</div>
+      </div>
+      <div>
+        <div class="muted" style="font-size:12px">Email</div>
+        <div style="font-size:18px" id="profileEmail">—</div>
+      </div>
+      <div>
+        <div class="muted" style="font-size:12px">Start date</div>
+        <div style="font-size:18px" id="profileStart">—</div>
+      </div>
+    </div>
+    <div class="muted" style="font-size:12px; margin-top:14px">To change your name or email, ask admin.</div>
+  </div>
+
+  <div class="card">
+    <h2>Change password</h2>
+    <form id="pwForm" style="max-width:420px">
+      <label>Current password</label>
+      <input type="password" id="curPw" required autocomplete="current-password">
+      <label>New password</label>
+      <input type="password" id="newPw" required minlength="8" autocomplete="new-password" placeholder="At least 8 characters">
+      <label>Confirm new password</label>
+      <input type="password" id="confirmPw" required minlength="8" autocomplete="new-password">
+      <div style="margin-top:16px"><button type="submit" id="saveBtn">Save new password</button></div>
+      <div class="error" id="pwErr"></div>
+    </form>
+  </div>
+</main>
+
+<script type="module">
+  import { auth, db } from "../assets/firebase-init.js";
+  import { requireRole, logout } from "../assets/auth-router.js";
+  import {
+    EmailAuthProvider, reauthenticateWithCredential, updatePassword
+  } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+
+  const { user, profile } = await requireRole("contractor");
+  document.getElementById("who").textContent = profile.name || profile.email || "";
+  document.getElementById("logoutBtn").addEventListener("click", logout);
+
+  document.getElementById("profileName").textContent  = profile.name || "—";
+  document.getElementById("profileEmail").textContent = profile.email || "—";
+  document.getElementById("profileStart").textContent = profile.startDate || "—";
+
+  const errEl = document.getElementById("pwErr");
+  const saveBtn = document.getElementById("saveBtn");
+  document.getElementById("pwForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    errEl.textContent = "";
+    errEl.style.color = "var(--bad)";
+    const cur = document.getElementById("curPw").value;
+    const a = document.getElementById("newPw").value;
+    const b = document.getElementById("confirmPw").value;
+    if (a !== b) { errEl.textContent = "New passwords don't match."; return; }
+    if (a === cur) { errEl.textContent = "New password must differ from current."; return; }
+
+    saveBtn.disabled = true; saveBtn.textContent = "Saving…";
+    try {
+      const cred = EmailAuthProvider.credential(user.email, cur);
+      await reauthenticateWithCredential(user, cred);
+      await updatePassword(user, a);
+      errEl.style.color = "var(--ok)";
+      errEl.textContent = "Password updated.";
+      document.getElementById("pwForm").reset();
+    } catch (ex) {
+      if (ex.code === "auth/wrong-password" || ex.code === "auth/invalid-credential") {
+        errEl.textContent = "Current password is incorrect.";
+      } else if (ex.code === "auth/weak-password") {
+        errEl.textContent = "New password is too weak.";
+      } else {
+        errEl.textContent = "Failed: " + (ex.message || ex.code);
+      }
+    } finally {
+      saveBtn.disabled = false; saveBtn.textContent = "Save new password";
+    }
+  });
+</script>
+</body>
+</html>

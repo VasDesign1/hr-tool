@@ -126,7 +126,8 @@
           <td>
             <div class="actions">
               <button class="ghost" data-act="edit" data-uid="${d.id}">Edit</button>
-              <button class="ghost" data-act="reset" data-email="${escapeHtml(u.email)}">Reset password</button>
+              <button class="ghost" data-act="force-pw" data-uid="${d.id}" data-name="${escapeHtml(u.name || u.email)}">Force pw change</button>
+              <button class="ghost" data-act="reset" data-email="${escapeHtml(u.email)}">Reset email</button>
               ${u.active
                 ? `<button class="ghost" data-act="deactivate" data-uid="${d.id}">Deactivate</button>`
                 : `<button class="ghost" data-act="activate" data-uid="${d.id}">Reactivate</button>`}
@@ -156,10 +157,17 @@
       document.getElementById("editErr").textContent = "";
       document.getElementById("editModal").classList.add("open");
     } else if (act === "reset") {
-      if (!confirm(`Send password reset email to ${data.email}?\n\nNote: vicair.com.au mail may strip the reset link. If it does, deactivate and re-add the user instead.`)) return;
+      if (!confirm(`Send password reset email to ${data.email}?\n\nNote: vicair.com.au mail strips the reset link, so this rarely works for in-house contractors. Use "Force pw change" instead — the contractor sets a new one on next login.`)) return;
       try {
         await sendPasswordResetEmail(auth, data.email);
         alert("Reset email sent.");
+      } catch (e) { alert("Failed: " + e.message); }
+    } else if (act === "force-pw") {
+      if (!confirm(`Force ${data.name} to set a new password on next login?\n\nThey'll still need their current password to sign in. After signing in they'll be sent straight to the "set new password" screen.`)) return;
+      try {
+        await updateDoc(doc(db, "users", data.uid), { mustChangePassword: true });
+        alert("Done — they'll set a new password next time they sign in.");
+        loadUsers();
       } catch (e) { alert("Failed: " + e.message); }
     } else if (act === "deactivate") {
       if (!confirm("Deactivate this user? They'll be blocked from signing in until reactivated.")) return;
