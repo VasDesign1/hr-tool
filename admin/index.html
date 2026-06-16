@@ -30,6 +30,7 @@
       </div>
       <div class="value" id="statActive">—</div>
       <div class="sub">total on team</div>
+      <div class="tile-tip" id="tipActive"></div>
     </div>
     <div class="stat indigo">
       <div class="stat-head">
@@ -38,6 +39,7 @@
       </div>
       <div class="value" id="statOnShift">—</div>
       <div class="sub">clocked in</div>
+      <div class="tile-tip" id="tipOnShift"></div>
     </div>
     <div class="stat violet">
       <div class="stat-head">
@@ -46,6 +48,7 @@
       </div>
       <div class="value" id="statOnBreak">—</div>
       <div class="sub">taking a break</div>
+      <div class="tile-tip" id="tipOnBreak"></div>
     </div>
     <div class="stat cyan">
       <div class="stat-head">
@@ -54,7 +57,14 @@
       </div>
       <div class="value" id="statWeekHours">—</div>
       <div class="sub" id="statWeekSub">Mon → today</div>
+      <div class="tile-tip" id="tipWeekHours"></div>
     </div>
+  </div>
+
+  <!-- Leave today + next 7 days -->
+  <div class="card">
+    <div class="toolbar"><h2>Leave today &amp; next 7 days</h2><a href="leave.html" style="font-size:13px">Manage leave →</a></div>
+    <div id="leaveSoonList" class="empty">Loading…</div>
   </div>
 
   <!-- Live board -->
@@ -79,7 +89,8 @@
   import { db } from "../assets/firebase-init.js";
   import { requireRole } from "../assets/auth-router.js";
   import { renderAdminNav, escapeHtml, getInitials } from "../assets/admin-nav.js";
-  import { melTimeShort, fmtHours, melDateKey } from "../assets/time.js";
+  import { melTimeShort, fmtHours, melDateKey, fmtDateShort, fmtDay } from "../assets/time.js";
+  import { fmtLeave } from "../assets/leave.js";
   import { collection, query, where, getDocs, onSnapshot } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const { profile } = await requireRole("admin");
@@ -115,6 +126,20 @@
         document.getElementById("statActive").textContent = allContractors.length;
         document.getElementById("statOnShift").textContent = active.length;
         document.getElementById("statOnBreak").textContent = active.filter(a => a.breakStart).length;
+
+        // Tile tooltips: contractor lists
+        const namesAll = allContractors.map(c => c.name || c.email).sort();
+        document.getElementById("tipActive").innerHTML = namesAll.length
+          ? `<span class="head">Active contractors</span><ul>${namesAll.map(n => `<li>${escapeHtml(n)}</li>`).join("")}</ul>`
+          : "";
+        const working = active.filter(a => !a.breakStart);
+        document.getElementById("tipOnShift").innerHTML = working.length
+          ? `<span class="head">Currently working</span><ul>${working.map(a => `<li>${escapeHtml(a.name)}<span class="right">since ${melTimeShort(a.start)}</span></li>`).join("")}</ul>`
+          : `<span class="head">Currently working</span><span class="none">Nobody is on shift.</span>`;
+        const onBreak = active.filter(a => a.breakStart);
+        document.getElementById("tipOnBreak").innerHTML = onBreak.length
+          ? `<span class="head">On break</span><ul>${onBreak.map(a => `<li>${escapeHtml(a.name)}<span class="right">since ${melTimeShort(a.breakStart)}</span></li>`).join("")}</ul>`
+          : `<span class="head">On break</span><span class="none">Nobody is on break.</span>`;
 
         if (active.length === 0) {
           liveEl.classList.add("empty");
@@ -211,6 +236,15 @@
     document.getElementById("statWeekHours").textContent = fmtHours(total);
     document.getElementById("statWeekSub").textContent = `${monKey} → today`;
 
+    // Tooltip — per-contractor breakdown
+    const breakdownRows = contractors
+      .map(c => ({ name: c.name || c.email, hours: hoursByUid[c.uid] || 0 }))
+      .filter(r => r.hours > 0)
+      .sort((a, b) => b.hours - a.hours);
+    document.getElementById("tipWeekHours").innerHTML = breakdownRows.length
+      ? `<span class="head">Team hours · this week</span><ul>${breakdownRows.map(r => `<li>${escapeHtml(r.name)}<span class="right">${fmtHours(r.hours)}</span></li>`).join("")}</ul>`
+      : `<span class="head">Team hours · this week</span><span class="none">No hours yet this week.</span>`;
+
     const ctx = document.getElementById("weekChart");
     if (window._wkChart) window._wkChart.destroy();
     window._wkChart = new Chart(ctx, {
@@ -220,13 +254,13 @@
         datasets: [
           {
             label: "Hours worked",
-            data: contractors.map(c => Number((hoursByUid[c.uid] || 0).toFixed(2))),
+            data: contractors.map(c => Number((hoursByUid[c.uid] || 0).toFixed(3))),
             backgroundColor: "#04785799",
             borderColor: "#047857", borderWidth: 1, borderRadius: 6, maxBarThickness: 36
           },
           {
             label: "Break time",
-            data: contractors.map(c => Number((breakHByUid[c.uid] || 0).toFixed(2))),
+            data: contractors.map(c => Number((breakHByUid[c.uid] || 0).toFixed(3))),
             backgroundColor: "#7C3AED99",
             borderColor: "#7C3AED", borderWidth: 1, borderRadius: 6, maxBarThickness: 36
           }
@@ -236,6 +270,54 @@
     });
   }
   loadWeekChart();
+
+  // ----- Leave today + next 7 days -----
+  async function loadLeaveSoon() {
+    const listEl = document.getElementById("leaveSoonList");
+    const todayKey = melDateKey();
+    const [y, m, d] = todayKey.split("-").map(Number);
+    const horizon = new Date(Date.UTC(y, m - 1, d) + 7 * 86_400_000);
+    const horizonKey = `${horizon.getUTCFullYear()}-${String(horizon.getUTCMonth()+1).padStart(2,"0")}-${String(horizon.getUTCDate()).padStart(2,"0")}`;
+
+    const [lrSnap, usnap] = await Promise.all([
+      getDocs(query(collection(db, "leaveRequests"), where("status", "in", ["approved", "pending"]))),
+      getDocs(query(collection(db, "users"), where("role", "==", "contractor")))
+    ]);
+    const usersByUid = {};
+    usnap.forEach(d => usersByUid[d.id] = d.data());
+
+    const soon = [];
+    lrSnap.forEach(d => {
+      const r = { id: d.id, ...d.data() };
+      if (r.startDate <= horizonKey && r.endDate >= todayKey) soon.push(r);
+    });
+    if (soon.length === 0) {
+      listEl.classList.add("empty");
+      listEl.innerHTML = "Nobody is on leave today or in the next 7 days.";
+      return;
+    }
+    soon.sort((a, b) => a.startDate.localeCompare(b.startDate));
+    listEl.classList.remove("empty");
+    listEl.innerHTML = `<table class="data">
+      <thead><tr><th>Contractor</th><th>Dates</th><th>Hours</th><th>Status</th><th>When</th></tr></thead>
+      <tbody>${soon.map(r => {
+        const u = usersByUid[r.uid];
+        const range = r.startDate === r.endDate ? fmtDay(r.startDate) : `${fmtDay(r.startDate)} → ${fmtDay(r.endDate)}`;
+        const onToday = r.startDate <= todayKey && r.endDate >= todayKey;
+        const whenLbl = onToday ? `<span class="badge ok" style="background:rgba(239,68,68,.12); color:#991B1B">Today</span>`
+                                 : `<span class="muted" style="font-size:12px">in ${Math.max(0, Math.ceil((Date.parse(r.startDate+"T00:00:00Z") - Date.parse(todayKey+"T00:00:00Z")) / 86_400_000))} day(s)</span>`;
+        const badge = r.status === "approved" ? `<span class="badge ok">Approved</span>` : `<span class="badge pending">Pending</span>`;
+        return `<tr>
+          <td>${escapeHtml(u?.name || r.requesterName || "—")}</td>
+          <td>${range}</td>
+          <td>${fmtLeave(r.hours)}</td>
+          <td>${badge}</td>
+          <td>${whenLbl}</td>
+        </tr>`;
+      }).join("")}</tbody>
+    </table>`;
+  }
+  loadLeaveSoon();
 </script>
 <script type="module">
   // Shared chart defaults — luxury feel
@@ -257,6 +339,18 @@
     }
   });
 
+  // h/m formatter — local to chart script
+  function fmtHM(hours) {
+    if (hours == null || isNaN(hours)) return "—";
+    const totalMins = Math.round(Math.abs(hours) * 60);
+    const sign = hours < 0 ? "-" : "";
+    const h = Math.floor(totalMins / 60), m = totalMins % 60;
+    if (h === 0 && m === 0) return "0m";
+    if (h === 0) return `${sign}${m}m`;
+    if (m === 0) return `${sign}${h}h`;
+    return `${sign}${h}h ${m}m`;
+  }
+
   // Grouped variant — multiple datasets (Worked vs Break)
   window.chartOptionsGrouped = (yLabel) => ({
     responsive: true, maintainAspectRatio: false,
@@ -271,12 +365,17 @@
       tooltip: {
         backgroundColor: "#0B1220", padding: 10, cornerRadius: 8,
         titleFont: { family: "Inter", weight: "600" }, bodyFont: { family: "Inter" },
-        callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y}h` }
+        callbacks: { label: (ctx) => `${ctx.dataset.label}: ${fmtHM(ctx.parsed.y)}` }
       }
     },
     scales: {
       x: { grid: { display: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 12 } } },
-      y: { beginAtZero: true, grid: { color: "#E6E8EE", drawBorder: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 12 } }, title: { display: true, text: yLabel, color: "#64748B", font: { family: "Inter", size: 12 } } }
+      y: {
+        beginAtZero: true,
+        grid: { color: "#E6E8EE", drawBorder: false },
+        ticks: { color: "#64748B", font: { family: "Inter", size: 12 }, callback: (v) => fmtHM(v) },
+        title: { display: true, text: yLabel, color: "#64748B", font: { family: "Inter", size: 12 } }
+      }
     }
   });
 </script>

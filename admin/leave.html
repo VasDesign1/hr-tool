@@ -74,7 +74,7 @@
   import { db } from "../assets/firebase-init.js";
   import { requireRole } from "../assets/auth-router.js";
   import { renderAdminNav, escapeHtml } from "../assets/admin-nav.js";
-  import { fmtDay, melDateKey } from "../assets/time.js";
+  import { fmtDay, melDateKey, fmtDateShort } from "../assets/time.js";
   import { computeBalance, fmtLeave } from "../assets/leave.js";
   import { renderCalendar } from "../assets/calendar.js";
   import { holidaysAsCalendarEntries } from "../assets/holidays.js";
@@ -280,13 +280,26 @@
       const u = usersByUid[r.uid];
       const shortName = (u?.name || r.requesterName || "?")
         .split(" ")[0]; // first name only to fit in calendar cell
+      const submitted = r.submittedAt?.toDate?.();
+      const decided   = r.decidedAt?.toDate?.();
+      const range = r.startDate === r.endDate ? r.startDate : `${r.startDate} → ${r.endDate}`;
+      const lines = [
+        `${u?.name || r.requesterName}`,
+        `${r.status.toUpperCase()} · ${fmtLeave(r.hours)}`,
+        range,
+        submitted ? `Requested: ${fmtDateShort(submitted)}` : null,
+        (r.status === "approved" || r.status === "denied") && decided
+          ? `${r.status === "approved" ? "Approved" : "Denied"}: ${fmtDateShort(decided)}${r.decidedBy ? " by " + r.decidedBy : ""}` : null,
+        r.reason ? `Reason: ${r.reason}` : null,
+        r.adminNote ? `Admin note: ${r.adminNote}` : null
+      ].filter(Boolean);
       entries.push({
         id: r.id,
         startDate: r.startDate,
         endDate: r.endDate,
         status: r.status,
         label: shortName,
-        tooltip: `${u?.name || r.requesterName} · ${r.status.toUpperCase()} · ${fmtLeave(r.hours)}${r.reason ? " · " + r.reason : ""}`,
+        tooltip: lines.join("\n"),
         full: r
       });
     });

@@ -284,8 +284,56 @@ a:hover { text-decoration: underline; }
   padding: 14px 16px;
   box-shadow: var(--shadow-xs);
   position: relative;
-  overflow: hidden;
 }
+.stat:hover { box-shadow: var(--shadow); border-color: var(--border-2); transition: box-shadow .12s, border-color .12s; }
+
+/* Tile hover tooltip */
+.tile-tip {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  background: var(--text);
+  color: white;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 12px;
+  min-width: 220px;
+  max-width: 340px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s, transform .15s;
+  z-index: 30;
+  box-shadow: var(--shadow-lg);
+  text-align: left;
+  line-height: 1.5;
+}
+.tile-tip::after {
+  content: "";
+  position: absolute;
+  top: 100%; left: 50%;
+  margin-left: -6px;
+  border: 6px solid transparent;
+  border-top-color: var(--text);
+}
+.tile-tip:empty { display: none; }
+.stat:hover .tile-tip:not(:empty) {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.tile-tip .head {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: #fff;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.tile-tip ul { margin: 0; padding: 0; list-style: none; }
+.tile-tip li { padding: 3px 0; color: #E2E8F0; display: flex; justify-content: space-between; gap: 10px; }
+.tile-tip li .right { color: #94A3B8; font-variant-numeric: tabular-nums; }
+.tile-tip .none { color: #94A3B8; font-style: italic; }
 .stat .stat-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .stat .icon-bubble {
   width: 30px; height: 30px;

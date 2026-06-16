@@ -130,7 +130,7 @@
   import { auth, db } from "../assets/firebase-init.js";
   import { requireRole, logout } from "../assets/auth-router.js";
   import { getInitials, escapeHtml } from "../assets/admin-nav.js";
-  import { fmtDay, melDateKey } from "../assets/time.js";
+  import { fmtDay, melDateKey, fmtDateShort } from "../assets/time.js";
   import { leaveHoursFor, computeBalance, fmtLeave } from "../assets/leave.js";
   import { renderCalendar } from "../assets/calendar.js";
   import { holidaysAsCalendarEntries, publicHolidaysInRange, holidayName } from "../assets/holidays.js";
@@ -163,11 +163,25 @@
     document.getElementById("kpiTaken").textContent   = fmtLeave(taken);
     document.getElementById("kpiPending").textContent = pending;
 
-    const calEntries = [...holidaysAsCalendarEntries(), ...allRequests.map(r => ({
-      id: r.id, startDate: r.startDate, endDate: r.endDate, status: r.status,
-      label: r.status === "approved" ? "Approved" : r.status === "pending" ? "Pending" : r.status === "denied" ? "Denied" : "Cancelled",
-      tooltip: `${r.status.toUpperCase()} · ${fmtLeave(r.hours)}${r.reason ? " · " + r.reason : ""}`
-    }))];
+    const calEntries = [...holidaysAsCalendarEntries(), ...allRequests.map(r => {
+      const submitted = r.submittedAt?.toDate?.();
+      const decided   = r.decidedAt?.toDate?.();
+      const range = r.startDate === r.endDate ? r.startDate : `${r.startDate} → ${r.endDate}`;
+      const lines = [
+        `${r.status.toUpperCase()} · ${fmtLeave(r.hours)}`,
+        range,
+        submitted ? `Requested: ${fmtDateShort(submitted)}` : null,
+        (r.status === "approved" || r.status === "denied") && decided
+          ? `${r.status === "approved" ? "Approved" : "Denied"}: ${fmtDateShort(decided)}` : null,
+        r.reason ? `Reason: ${r.reason}` : null,
+        r.adminNote ? `Admin note: ${r.adminNote}` : null
+      ].filter(Boolean);
+      return {
+        id: r.id, startDate: r.startDate, endDate: r.endDate, status: r.status,
+        label: r.status === "approved" ? "Approved" : r.status === "pending" ? "Pending" : r.status === "denied" ? "Denied" : "Cancelled",
+        tooltip: lines.join("\n")
+      };
+    })];
     renderCalendar(document.getElementById("leaveCalendar"), {
       entries: calEntries,
       onClickDay: (dateKey) => openRequestModalForDate(dateKey),

@@ -40,6 +40,13 @@ export function hoursBetween(startMs, endMs) {
   return (endMs - startMs) / 3_600_000;
 }
 
+// "16 Jun 2026" — short calendar date for stamps/tooltips.
+export function fmtDateShort(date) {
+  if (!date) return "—";
+  const d = (date instanceof Date) ? date : new Date(date);
+  return d.toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" });
+}
+
 // Pretty day label: "Mon 16 Jun" in Melbourne.
 export function fmtDay(dateKey) {
   // dateKey is "YYYY-MM-DD" interpreted as Melbourne local — show as a label.

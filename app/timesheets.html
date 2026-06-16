@@ -147,6 +147,16 @@
     return `${h}h ${m}m`;
   }
 
+  function fmtHM(hours) {
+    if (hours == null || isNaN(hours)) return "—";
+    const totalMins = Math.round(Math.abs(hours) * 60);
+    const sign = hours < 0 ? "-" : "";
+    const h = Math.floor(totalMins / 60), m = totalMins % 60;
+    if (h === 0 && m === 0) return "0m";
+    if (h === 0) return `${sign}${m}m`;
+    if (m === 0) return `${sign}${h}h`;
+    return `${sign}${h}h ${m}m`;
+  }
   let chartRef = null;
   function chartBase(yLabel, grouped) {
     return {
@@ -158,12 +168,17 @@
         tooltip: {
           backgroundColor: "#0B1220", padding: 10, cornerRadius: 8,
           titleFont: { family: "Inter", weight: "600" }, bodyFont: { family: "Inter" },
-          callbacks: grouped ? { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y}h` } : undefined
+          callbacks: { label: (ctx) => `${grouped ? ctx.dataset.label + ": " : ""}${fmtHM(ctx.parsed.y)}` }
         }
       },
       scales: {
         x: { grid: { display: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 11 }, maxTicksLimit: 30 } },
-        y: { beginAtZero: true, grid: { color: "#E6E8EE", drawBorder: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 12 } }, title: { display: true, text: yLabel, color: "#64748B", font: { family: "Inter", size: 12 } } }
+        y: {
+          beginAtZero: true,
+          grid: { color: "#E6E8EE", drawBorder: false },
+          ticks: { color: "#64748B", font: { family: "Inter", size: 12 }, callback: (v) => fmtHM(v) },
+          title: { display: true, text: yLabel, color: "#64748B", font: { family: "Inter", size: 12 } }
+        }
       }
     };
   }

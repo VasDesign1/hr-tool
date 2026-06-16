@@ -114,7 +114,7 @@
   import { auth, db } from "../assets/firebase-init.js";
   import { requireRole, logout } from "../assets/auth-router.js";
   import { getInitials, escapeHtml } from "../assets/admin-nav.js";
-  import { melClock, localClock, melDateKey, melTimeShort, fmtHours, fmtDay } from "../assets/time.js";
+  import { melClock, localClock, melDateKey, melTimeShort, fmtHours, fmtDay, fmtDateShort } from "../assets/time.js";
   import { computeBalance, fmtLeave } from "../assets/leave.js";
   import {
     collection, query, where, getDocs, addDoc, doc, getDoc, updateDoc,
@@ -344,6 +344,30 @@
     document.getElementById("statLeave").textContent = fmtLeave(balance);
     document.getElementById("statLeaveSub").textContent = `accrued ${fmtLeave(accrued)} · taken ${fmtLeave(taken)}`;
     document.getElementById("statPendingLeave").textContent = pending;
+
+    // ----- Tile tooltips -----
+    const takenRows = approved
+      .slice()
+      .sort((a, b) => b.startDate.localeCompare(a.startDate))
+      .slice(0, 8)
+      .map(r => {
+        const range = r.startDate === r.endDate ? fmtDay(r.startDate) : `${fmtDay(r.startDate)} → ${fmtDay(r.endDate)}`;
+        return `<li>${range}<span class="right">${fmtLeave(r.hours)}</span></li>`;
+      });
+    document.getElementById("tipLeave").innerHTML = takenRows.length
+      ? `<span class="head">Leave taken</span><ul>${takenRows.join("")}</ul>`
+      : `<span class="head">Leave taken</span><span class="none">None yet.</span>`;
+
+    const pendingRows = allRequests
+      .filter(r => r.status === "pending")
+      .sort((a, b) => a.startDate.localeCompare(b.startDate))
+      .map(r => {
+        const range = r.startDate === r.endDate ? fmtDay(r.startDate) : `${fmtDay(r.startDate)} → ${fmtDay(r.endDate)}`;
+        return `<li>${range}<span class="right">${fmtLeave(r.hours)}</span></li>`;
+      });
+    document.getElementById("tipPending").innerHTML = pendingRows.length
+      ? `<span class="head">Awaiting admin</span><ul>${pendingRows.join("")}</ul>`
+      : "";
 
     const listEl = document.getElementById("upcomingLeave");
     if (upcoming.length === 0) {
