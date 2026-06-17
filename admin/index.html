@@ -238,7 +238,7 @@
       }
     }
 
-    const PALETTE = ["#047857","#4F46E5","#0891B2","#7C3AED","#D97706","#EC4899"];
+    const { VIVID_PALETTE: PALETTE, vividChartOptions } = await import("../assets/chart-style.js");
     const perUserDaily = await Promise.all(contractors.map(async (c) => {
       const teSnap = await getDocs(query(collection(db, "timeEntries"), where("uid", "==", c.uid)));
       const map = Object.fromEntries(weekKeys.map(k => [k, 0]));
@@ -271,7 +271,7 @@
       return {
         label: `${(row.user.name || row.user.email).split(" ")[0]} · ${fmtHours(row.total)}`,
         data: weekKeys.map(k => Number((row.map[k] || 0).toFixed(2))),
-        backgroundColor: c + "99", borderColor: c, borderWidth: 1, borderRadius: 4, maxBarThickness: 28
+        backgroundColor: c, borderColor: c, borderWidth: 0, borderRadius: 2, maxBarThickness: 22
       };
     });
 
@@ -280,25 +280,7 @@
     window._wkChart = new Chart(ctx, {
       type: "bar",
       data: { labels: weekKeys.map(k => fmtAUDow(k)), datasets },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        interaction: { intersect: false, mode: "index" },
-        plugins: {
-          legend: { display: true, position: "top", align: "end", labels: { boxWidth: 12, boxHeight: 12, padding: 14, usePointStyle: true, color: "#1F2937", font: { family: "Inter", size: 12, weight: "500" } } },
-          tooltip: {
-            backgroundColor: "#0B1220", padding: 12, cornerRadius: 8,
-            titleFont: { family: "Inter", weight: "600", size: 13 }, bodyFont: { family: "Inter", size: 12 },
-            callbacks: {
-              title: (items) => fmtAUDow(weekKeys[items[0].dataIndex]),
-              label: (ctx) => `${ctx.dataset.label.split(" · ")[0]}: ${fmtHours(ctx.parsed.y)}`
-            }
-          }
-        },
-        scales: {
-          x: { grid: { display: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 12 } } },
-          y: { beginAtZero: true, grid: { color: "#E6E8EE", drawBorder: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 12 }, callback: (v) => fmtHours(v) }, title: { display: true, text: "Hours", color: "#64748B", font: { family: "Inter", size: 12 } } }
-        }
-      }
+      options: vividChartOptions({ yLabel: "Hours", titleLookup: (idx) => fmtAUDow(weekKeys[idx]) })
     });
   }
   loadWeekChart();

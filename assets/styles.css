@@ -359,6 +359,9 @@ a:hover { text-decoration: underline; }
   font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
 }
 
+/* Vibrant chart container — full width, subtle inset */
+canvas.chart-vivid { width: 100% !important; }
+
 /* Activity timeline */
 .timeline { display: flex; flex-direction: column; gap: 0; position: relative; padding-left: 8px; }
 .timeline-row { display: grid; grid-template-columns: 70px 18px 1fr; gap: 12px; align-items: center; padding: 7px 0; position: relative; }

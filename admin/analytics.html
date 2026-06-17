@@ -117,11 +117,11 @@
     users.map(u => `<option value="${u.uid}">${escapeHtml(u.name || u.email)}</option>`).join("");
   // default to "All contractors" so admin sees comparison upfront
 
-  // Color palette — one stable color per contractor for grouped comparison views
-  const PALETTE = ["#047857","#4F46E5","#0891B2","#7C3AED","#D97706","#EC4899"];
+  // Vibrant per-contractor palette
+  const { VIVID_PALETTE: PALETTE, vividChartOptions } = await import("../assets/chart-style.js");
   function contractorColor(uid) {
     const idx = users.filter(u => u.active !== false).findIndex(u => u.uid === uid);
-    return PALETTE[idx % PALETTE.length] || "#047857";
+    return PALETTE[idx % PALETTE.length] || PALETTE[0];
   }
   function firstName(u) { return (u.name || u.email).split(" ")[0]; }
 
@@ -268,8 +268,8 @@
       destroy("clockIn");
       charts.clockIn = new Chart(document.getElementById("clockInChart"), {
         type: "bar",
-        data: { labels: hourLabels, datasets: [{ label: "Clock-ins", data: buckets, backgroundColor: "#4F46E599", borderColor: "#4F46E5", borderWidth: 1, borderRadius: 6, maxBarThickness: 28 }] },
-        options: chartBase("Sessions", false, true)
+        data: { labels: hourLabels, datasets: [{ label: "Clock-ins", data: buckets, backgroundColor: "#3B82F6", borderColor: "#3B82F6", borderWidth: 0, borderRadius: 2, maxBarThickness: 26 }] },
+        options: vividChartOptions({ yLabel: "Sessions", isCount: true })
       });
 
       const dowSum = new Array(7).fill(0), dowDays = new Array(7).fill(0), seen = new Map();
@@ -284,8 +284,8 @@
       destroy("dow");
       charts.dow = new Chart(document.getElementById("dowChart"), {
         type: "bar",
-        data: { labels: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], datasets: [{ label: "Avg hours", data: dowAvg.map(v => Number(v.toFixed(2))), backgroundColor: "#0891B299", borderColor: "#0891B2", borderWidth: 1, borderRadius: 6, maxBarThickness: 60 }] },
-        options: chartBase("Avg hours / day", false)
+        data: { labels: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], datasets: [{ label: "Avg hours", data: dowAvg.map(v => Number(v.toFixed(2))), backgroundColor: "#0EA5E9", borderColor: "#0EA5E9", borderWidth: 0, borderRadius: 2, maxBarThickness: 56 }] },
+        options: vividChartOptions({ yLabel: "Avg hours / day" })
       });
 
     } else {
@@ -331,7 +331,7 @@
         return {
           label: `${firstName(u)} · ${fmtHM(totalH)}`,
           data: orderedKeys.map(k => Number(data[k].toFixed(2))),
-          backgroundColor: c + "99", borderColor: c, borderWidth: 1, borderRadius: 4, maxBarThickness: barW
+          backgroundColor: c, borderColor: c, borderWidth: 0, borderRadius: 2, maxBarThickness: barW
         };
       });
       destroy("daily");
@@ -350,13 +350,13 @@
           if (h >= 5 && h <= 20) buckets[h - 5]++;
         });
         const c = contractorColor(u.uid);
-        return { label: firstName(u), data: buckets, backgroundColor: c + "99", borderColor: c, borderWidth: 1, borderRadius: 4, maxBarThickness: 22 };
+        return { label: firstName(u), data: buckets, backgroundColor: c, borderColor: c, borderWidth: 0, borderRadius: 2, maxBarThickness: 20 };
       });
       destroy("clockIn");
       charts.clockIn = new Chart(document.getElementById("clockInChart"), {
         type: "bar",
         data: { labels: hourLabels, datasets: clockInDatasets },
-        options: chartBase("Sessions", true, true)
+        options: vividChartOptions({ yLabel: "Sessions", isCount: true })
       });
 
       // Day-of-week chart — grouped per contractor (avg hours / day)
@@ -371,13 +371,13 @@
         });
         const avg = dowSum.map((s, j) => dowDays[j] > 0 ? Number((s / dowDays[j]).toFixed(2)) : 0);
         const c = contractorColor(u.uid);
-        return { label: firstName(u), data: avg, backgroundColor: c + "99", borderColor: c, borderWidth: 1, borderRadius: 4, maxBarThickness: 32 };
+        return { label: firstName(u), data: avg, backgroundColor: c, borderColor: c, borderWidth: 0, borderRadius: 2, maxBarThickness: 28 };
       });
       destroy("dow");
       charts.dow = new Chart(document.getElementById("dowChart"), {
         type: "bar",
         data: { labels: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], datasets: dowDatasets },
-        options: chartBase("Avg hours / day", true, false)
+        options: vividChartOptions({ yLabel: "Avg hours / day" })
       });
     }
 
@@ -416,20 +416,20 @@
         labels: active.map(u => (u.name || u.email).split(" ")[0]),
         datasets: [
           {
-            label: `Hours worked · total ${fmtHM(teamWorked)}`,
+            label: `Worked · ${fmtHM(teamWorked)}`,
             data: active.map(u => Number((hoursByUid[u.uid] || 0).toFixed(2))),
-            backgroundColor: "#04785799",
-            borderColor: "#047857", borderWidth: 1, borderRadius: 6, maxBarThickness: 36
+            backgroundColor: "#14B8A6",
+            borderColor: "#14B8A6", borderWidth: 0, borderRadius: 2, maxBarThickness: 34
           },
           {
-            label: `Break time · total ${fmtHM(teamBreak)}`,
+            label: `Break · ${fmtHM(teamBreak)}`,
             data: active.map(u => Number((breakHByUid[u.uid] || 0).toFixed(2))),
-            backgroundColor: "#7C3AED99",
-            borderColor: "#7C3AED", borderWidth: 1, borderRadius: 6, maxBarThickness: 36
+            backgroundColor: "#8B5CF6",
+            borderColor: "#8B5CF6", borderWidth: 0, borderRadius: 2, maxBarThickness: 34
           }
         ]
       },
-      options: chartBase("Hours", true, false)
+      options: vividChartOptions({ yLabel: "Hours" })
     });
   }
 
