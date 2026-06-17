@@ -58,6 +58,7 @@
       </div>
       <div class="value" id="kpiHours">—</div>
       <div class="sub" id="kpiHoursSub">range</div>
+      <div class="tile-tip" id="tipHours"></div>
     </div>
     <div class="stat indigo">
       <div class="stat-head">
@@ -66,6 +67,7 @@
       </div>
       <div class="value" id="kpiDays">—</div>
       <div class="sub" id="kpiDaysSub">unique days</div>
+      <div class="tile-tip" id="tipDays"></div>
     </div>
     <div class="stat cyan">
       <div class="stat-head">
@@ -74,6 +76,7 @@
       </div>
       <div class="value" id="kpiAvg">—</div>
       <div class="sub">hours</div>
+      <div class="tile-tip" id="tipAvg"></div>
     </div>
     <div class="stat violet">
       <div class="stat-head">
@@ -82,6 +85,7 @@
       </div>
       <div class="value" id="kpiBreak">—</div>
       <div class="sub">total</div>
+      <div class="tile-tip" id="tipBreak"></div>
     </div>
   </div>
 
@@ -127,7 +131,7 @@
   import { auth, db } from "../assets/firebase-init.js";
   import { requireRole, logout } from "../assets/auth-router.js";
   import { getInitials, escapeHtml } from "../assets/admin-nav.js";
-  import { fmtHours, fmtDay, lastNDateKeys, melDateKey } from "../assets/time.js";
+  import { fmtHours, fmtDay, lastNDateKeys, melDateKey, melTimeShort, hoursBetween, fmtAUShort, fmtAUDow, fmtAU } from "../assets/time.js";
   import {
     collection, query, where, getDocs, addDoc, serverTimestamp
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
@@ -158,21 +162,29 @@
     return `${sign}${h}h ${m}m`;
   }
   let chartRef = null;
-  function chartBase(yLabel, grouped) {
+  function chartBase(yLabel, grouped, orderedKeys) {
     return {
       responsive: true, maintainAspectRatio: false,
+      interaction: { intersect: false, mode: "index" },
       plugins: {
         legend: grouped
           ? { display: true, position: "top", align: "end", labels: { boxWidth: 12, boxHeight: 12, padding: 14, usePointStyle: true, color: "#1F2937", font: { family: "Inter", size: 12, weight: "500" } } }
           : { display: false },
         tooltip: {
-          backgroundColor: "#0B1220", padding: 10, cornerRadius: 8,
-          titleFont: { family: "Inter", weight: "600" }, bodyFont: { family: "Inter" },
-          callbacks: { label: (ctx) => `${grouped ? ctx.dataset.label + ": " : ""}${fmtHM(ctx.parsed.y)}` }
+          backgroundColor: "#0B1220", padding: 12, cornerRadius: 8,
+          titleFont: { family: "Inter", weight: "600", size: 13 }, bodyFont: { family: "Inter", size: 12 },
+          callbacks: {
+            title: (items) => {
+              if (!orderedKeys) return items[0].label;
+              const idx = items[0].dataIndex;
+              return fmtAUDow(orderedKeys[idx]);
+            },
+            label: (ctx) => `${grouped ? ctx.dataset.label.split(" · ")[0] + ": " : ""}${fmtHM(ctx.parsed.y)}`
+          }
         }
       },
       scales: {
-        x: { grid: { display: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 11 }, maxTicksLimit: 30 } },
+        x: { grid: { display: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 11 }, maxRotation: 60, autoSkip: true, autoSkipPadding: 6 } },
         y: {
           beginAtZero: true,
           grid: { color: "#E6E8EE", drawBorder: false },
@@ -190,7 +202,7 @@
 
     const teSnap = await getDocs(query(collection(db, "timeEntries"), where("uid", "==", user.uid)));
     const entries = [];
-    teSnap.forEach(d => entries.push(d.data()));
+    teSnap.forEach(d => entries.push({ id: d.id, ...d.data() }));
     const inRange = entries.filter(e => e.date >= oldestKey && e.date <= keys[0]);
 
     let total = 0, breakMins = 0;
@@ -205,6 +217,27 @@
     document.getElementById("kpiDaysSub").textContent = `of ${n}`;
     document.getElementById("kpiAvg").textContent = daySet.size > 0 ? fmtHours(total / daySet.size) : "—";
     document.getElementById("kpiBreak").textContent = fmtMinutes(breakMins);
+
+    // KPI tooltips
+    const setTip = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+    const dayTotals = {};
+    inRange.forEach(e => { if (e.hoursWorked) dayTotals[e.date] = (dayTotals[e.date] || 0) + e.hoursWorked; });
+    const topDays = Object.entries(dayTotals).sort((a, b) => b[1] - a[1]).slice(0, 6);
+    setTip("tipHours", topDays.length
+      ? `<span class="head">Top hours days</span><ul>${topDays.map(([k, h]) => `<li>${fmtAU(k)}<span class="right">${fmtHours(h)}</span></li>`).join("")}</ul>`
+      : `<span class="head">Top hours days</span><span class="none">No entries in this range.</span>`);
+    setTip("tipDays", daySet.size
+      ? `<span class="head">Worked days</span><ul>${[...daySet].sort().reverse().slice(0, 8).map(k => `<li>${fmtAU(k)}<span class="right">${fmtHours(dayTotals[k] || 0)}</span></li>`).join("")}</ul>`
+      : "");
+    setTip("tipAvg", daySet.size
+      ? `<span class="head">Avg over worked days</span><span class="none">${fmtHours(total / daySet.size)} per day · ${daySet.size} day(s)</span>`
+      : "");
+    const dayBreaks = {};
+    inRange.forEach(e => { if (e.breakMinutes) dayBreaks[e.date] = (dayBreaks[e.date] || 0) + e.breakMinutes; });
+    const topBreakDays = Object.entries(dayBreaks).sort((a, b) => b[1] - a[1]).slice(0, 6);
+    setTip("tipBreak", topBreakDays.length
+      ? `<span class="head">Most break time</span><ul>${topBreakDays.map(([k, m]) => `<li>${fmtAU(k)}<span class="right">${fmtMinutes(m)}</span></li>`).join("")}</ul>`
+      : `<span class="head">Break time</span><span class="none">No breaks logged.</span>`);
 
     // Chart (grouped: worked + break per day)
     const ordered = [...keys].reverse();
@@ -222,7 +255,7 @@
     chartRef = new Chart(document.getElementById("dailyChart"), {
       type: "bar",
       data: {
-        labels: ordered.map(k => k.slice(5)),
+        labels: ordered.map(k => n <= 14 ? fmtAUDow(k) : fmtAUShort(k)),
         datasets: [
           {
             label: `Hours worked · total ${fmtHM(workedTotal)}`,
@@ -238,11 +271,11 @@
           }
         ]
       },
-      options: chartBase("Hours", true)
+      options: chartBase("Hours", true, ordered)
     });
-    document.getElementById("chartMeta").textContent = `${oldestKey} → ${keys[0]}`;
+    document.getElementById("chartMeta").textContent = `${fmtAU(oldestKey)} → ${fmtAU(keys[0])}`;
 
-    // Day-by-day table — only days with entries, newest first
+    // Day-by-day table — only days with entries, newest first, with sessions
     const daysList = document.getElementById("daysList");
     const daysWithEntries = ordered.filter(k => dailyData[k] > 0).reverse();
     if (daysWithEntries.length === 0) {
@@ -250,9 +283,35 @@
       daysList.innerHTML = "No entries in this range.";
     } else {
       daysList.classList.remove("empty");
+      const entriesByDay = {};
+      inRange.forEach(e => {
+        if (!entriesByDay[e.date]) entriesByDay[e.date] = [];
+        entriesByDay[e.date].push(e);
+      });
       daysList.innerHTML = `<table class="data">
-        <thead><tr><th>Date</th><th>Hours</th></tr></thead>
-        <tbody>${daysWithEntries.map(k => `<tr><td>${fmtDay(k)}</td><td>${fmtHours(dailyData[k])}</td></tr>`).join("")}</tbody>
+        <thead><tr><th>Date</th><th>Sessions</th><th>Break</th><th style="text-align:right">Hours</th></tr></thead>
+        <tbody>${daysWithEntries.map(k => {
+          const dayEntries = (entriesByDay[k] || []).slice().sort((a, c) => {
+            const as = a.clockInUTC?.toMillis?.() || 0;
+            const cs = c.clockInUTC?.toMillis?.() || 0;
+            return as - cs;
+          });
+          const sessionsHtml = `<div class="session-chips">${dayEntries.map(e => {
+            const start = e.clockInUTC?.toDate?.();
+            const end   = e.clockOutUTC?.toDate?.();
+            if (!start) return "";
+            if (!end) return `<span class="session-chip open"><span>${melTimeShort(start)}</span><span class="arr">→</span><span class="to">still in</span></span>`;
+            const dur = hoursBetween(start.getTime(), end.getTime());
+            return `<span class="session-chip"><span>${melTimeShort(start)}</span><span class="arr">→</span><span>${melTimeShort(end)}</span><span class="dur">${fmtHours(dur)}</span></span>`;
+          }).join("")}</div>`;
+          const breakMs = (dayBreaks[k] || 0);
+          return `<tr>
+            <td>${fmtAU(k)}<div class="muted" style="font-size:11px; margin-top:2px">${fmtDay(k)}</div></td>
+            <td>${sessionsHtml}</td>
+            <td class="muted">${breakMs > 0 ? fmtMinutes(breakMs) : "—"}</td>
+            <td style="text-align:right; font-variant-numeric: tabular-nums"><strong>${fmtHours(dailyData[k])}</strong></td>
+          </tr>`;
+        }).join("")}</tbody>
       </table>`;
     }
   }

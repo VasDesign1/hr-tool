@@ -104,6 +104,12 @@
     </div>
   </div>
 
+  <!-- Today's activity timeline -->
+  <div class="card">
+    <div class="toolbar"><h2>Today's activity</h2><span class="muted" style="font-size:12px">Melbourne time</span></div>
+    <div id="activityTimeline" class="empty">Loading…</div>
+  </div>
+
   <!-- Upcoming leave preview -->
   <div class="card">
     <div class="toolbar">
@@ -185,6 +191,43 @@
     return `${h}h ${m}m`;
   }
 
+  // Defensive setter — silently no-ops if the element isn't in the cached HTML.
+  function setTip(id, html) {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+  }
+
+  function renderActivityTimeline(sessions, breakSegments) {
+    const events = [];
+    sessions.forEach(s => {
+      events.push({ t: s.start, kind: "start", label: "Clocked in" });
+      if (s.end) events.push({ t: s.end, kind: "end", label: "Clocked out", meta: s.hours != null ? `worked ${fmtHours(s.hours)}` : "" });
+    });
+    breakSegments.forEach(b => {
+      events.push({ t: b.start, kind: "brk", label: "Took a break" });
+      events.push({ t: b.end,   kind: "resume", label: "Resumed work", meta: `break ${fmtMinutes(b.minutes)}` });
+    });
+    events.sort((a, b) => a.t - b.t);
+    const el = document.getElementById("activityTimeline");
+    if (!el) return;
+    if (events.length === 0) {
+      el.classList.add("empty");
+      el.innerHTML = "Nothing yet today — clock in to start your day.";
+      return;
+    }
+    el.classList.remove("empty");
+    el.innerHTML = `<div class="timeline">${events.map(ev => `
+      <div class="timeline-row ${ev.kind}">
+        <div class="ts">${melTimeShort(ev.t)}</div>
+        <div class="dot-col"><div class="dot"></div></div>
+        <div class="who-line">
+          <span class="act">${ev.label}</span>
+          ${ev.meta ? `<span class="meta">· ${escapeHtml(ev.meta)}</span>` : ""}
+        </div>
+      </div>
+    `).join("")}</div>`;
+  }
+
   async function refreshTodayMetrics() {
     const todayKey = melDateKey();
     const snap = await getDocs(query(collection(db, "timeEntries"), where("uid", "==", user.uid), where("date", "==", todayKey)));
@@ -214,7 +257,6 @@
       document.getElementById("statBreak").textContent = fmtMinutes(todayBreakMinsClosed);
     }
 
-    // ----- Tile tooltips for Today's hours + Break time -----
     sessions.sort((a, b) => a.start - b.start);
     setTip("tipToday", sessions.length
       ? `<span class="head">Today's sessions</span><ul>${sessions.map(s => {
@@ -230,12 +272,8 @@
           return `<li>${melTimeShort(b.start)} → ${melTimeShort(b.end)}<span class="right">${fmtMinutes(b.minutes)}</span></li>`;
         }).join("")}</ul>`
       : `<span class="head">Today's breaks</span><span class="none">No breaks taken today.</span>`);
-  }
 
-  // Defensive setter — silently no-ops if the tile-tip element isn't in the cached HTML.
-  function setTip(id, html) {
-    const el = document.getElementById(id);
-    if (el) el.innerHTML = html;
+    renderActivityTimeline(sessions, breakSegments);
   }
 
   function outsideWorkingWindow() {

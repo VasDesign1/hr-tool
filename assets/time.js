@@ -47,6 +47,32 @@ export function fmtDateShort(date) {
   return d.toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" });
 }
 
+// "16/06/2026" — Aussie numeric format. Accepts Date or "YYYY-MM-DD".
+export function fmtAU(dateOrKey) {
+  if (!dateOrKey) return "—";
+  if (typeof dateOrKey === "string") {
+    const [y, m, d] = dateOrKey.split("-");
+    return `${d}/${m}/${y}`;
+  }
+  return dateOrKey.toLocaleDateString("en-AU", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+// "16/06" — short chart-axis label for tight bars.
+export function fmtAUShort(dateKey) {
+  if (!dateKey) return "";
+  const [, m, d] = dateKey.split("-");
+  return `${d}/${m}`;
+}
+
+// "Mon 16/06" — weekday + short date, useful for chart axes.
+export function fmtAUDow(dateKey) {
+  if (!dateKey) return "";
+  const [y, m, d] = dateKey.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const dow = dt.toLocaleDateString("en-AU", { timeZone: "UTC", weekday: "short" });
+  return `${dow} ${String(d).padStart(2,"0")}/${String(m).padStart(2,"0")}`;
+}
+
 // Pretty day label: "Mon 16 Jun" in Melbourne.
 export function fmtDay(dateKey) {
   // dateKey is "YYYY-MM-DD" interpreted as Melbourne local — show as a label.

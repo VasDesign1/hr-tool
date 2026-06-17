@@ -50,6 +50,7 @@
       </div>
       <div class="value" id="kpiBalance">—</div>
       <div class="sub">unused</div>
+      <div class="tile-tip" id="tipBalance"></div>
     </div>
     <div class="stat indigo">
       <div class="stat-head">
@@ -58,6 +59,7 @@
       </div>
       <div class="value" id="kpiAccrued">—</div>
       <div class="sub">earned to date</div>
+      <div class="tile-tip" id="tipAccrued"></div>
     </div>
     <div class="stat cyan">
       <div class="stat-head">
@@ -66,6 +68,7 @@
       </div>
       <div class="value" id="kpiTaken">—</div>
       <div class="sub">used so far</div>
+      <div class="tile-tip" id="tipTaken"></div>
     </div>
     <div class="stat amber">
       <div class="stat-head">
@@ -74,6 +77,7 @@
       </div>
       <div class="value" id="kpiPending">—</div>
       <div class="sub">awaiting admin</div>
+      <div class="tile-tip" id="tipPending"></div>
     </div>
   </div>
 
@@ -130,7 +134,7 @@
   import { auth, db } from "../assets/firebase-init.js";
   import { requireRole, logout } from "../assets/auth-router.js";
   import { getInitials, escapeHtml } from "../assets/admin-nav.js";
-  import { fmtDay, melDateKey, fmtDateShort } from "../assets/time.js";
+  import { fmtDay, melDateKey, fmtDateShort, fmtAU } from "../assets/time.js";
   import { leaveHoursFor, computeBalance, fmtLeave } from "../assets/leave.js";
   import { renderCalendar } from "../assets/calendar.js";
   import { holidaysAsCalendarEntries, publicHolidaysInRange, holidayName } from "../assets/holidays.js";
@@ -162,6 +166,30 @@
     document.getElementById("kpiAccrued").textContent = fmtLeave(accrued);
     document.getElementById("kpiTaken").textContent   = fmtLeave(taken);
     document.getElementById("kpiPending").textContent = pending;
+
+    // Tile tooltips
+    const setTip = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+    setTip("tipBalance", `<span class="head">Leave balance</span><ul>
+        <li>Accrued<span class="right">${fmtLeave(accrued)}</span></li>
+        <li>Taken<span class="right">${fmtLeave(taken)}</span></li>
+        <li>Balance<span class="right">${fmtLeave(balance)}</span></li>
+      </ul>`);
+    setTip("tipAccrued", `<span class="head">Accrual rate</span><span class="none">~2.92h per 38h week · capped at 152h/yr</span>`);
+
+    const takenList = approved.slice().sort((a, b) => b.startDate.localeCompare(a.startDate)).slice(0, 8);
+    setTip("tipTaken", takenList.length
+      ? `<span class="head">Leave taken</span><ul>${takenList.map(r => {
+          const range = r.startDate === r.endDate ? fmtAU(r.startDate) : `${fmtAU(r.startDate)} → ${fmtAU(r.endDate)}`;
+          return `<li>${range}<span class="right">${fmtLeave(r.hours)}</span></li>`;
+        }).join("")}</ul>`
+      : "");
+    const pendingList = allRequests.filter(r => r.status === "pending").sort((a, b) => a.startDate.localeCompare(b.startDate));
+    setTip("tipPending", pendingList.length
+      ? `<span class="head">Awaiting admin</span><ul>${pendingList.map(r => {
+          const range = r.startDate === r.endDate ? fmtAU(r.startDate) : `${fmtAU(r.startDate)} → ${fmtAU(r.endDate)}`;
+          return `<li>${range}<span class="right">${fmtLeave(r.hours)}</span></li>`;
+        }).join("")}</ul>`
+      : `<span class="head">Awaiting admin</span><span class="none">No pending requests.</span>`);
 
     const calEntries = [...holidaysAsCalendarEntries(), ...allRequests.map(r => {
       const submitted = r.submittedAt?.toDate?.();

@@ -73,6 +73,12 @@
     <div id="liveList" class="empty">Loading…</div>
   </div>
 
+  <!-- Today's team activity timeline -->
+  <div class="card">
+    <div class="toolbar"><h2>Today's activity</h2><span class="muted" style="font-size:12px">All contractor events · Melbourne</span></div>
+    <div id="teamActivityTimeline" class="empty">Loading…</div>
+  </div>
+
   <!-- Hours-this-week chart -->
   <div class="card">
     <div class="toolbar">
@@ -89,7 +95,7 @@
   import { db } from "../assets/firebase-init.js";
   import { requireRole } from "../assets/auth-router.js";
   import { renderAdminNav, escapeHtml, getInitials } from "../assets/admin-nav.js";
-  import { melTimeShort, fmtHours, melDateKey, fmtDateShort, fmtDay } from "../assets/time.js";
+  import { melTimeShort, fmtHours, melDateKey, fmtDateShort, fmtDay, fmtAU, fmtAUDow, fmtAUShort } from "../assets/time.js";
   import { fmtLeave } from "../assets/leave.js";
   import { collection, query, where, getDocs, onSnapshot } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
@@ -248,6 +254,9 @@
       ? `<span class="head">Team hours · this week</span><ul>${breakdownRows.map(r => `<li>${escapeHtml(r.name)}<span class="right">${fmtHours(r.hours)}</span></li>`).join("")}</ul>`
       : `<span class="head">Team hours · this week</span><span class="none">No hours yet this week.</span>`);
 
+    // Compute the actual dates in the current week for the subtitle
+    document.getElementById("statWeekSub").textContent = `${fmtAU(monKey)} → ${fmtAU(todayKey)}`;
+
     const ctx = document.getElementById("weekChart");
     if (window._wkChart) window._wkChart.destroy();
     window._wkChart = new Chart(ctx, {
@@ -273,6 +282,60 @@
     });
   }
   loadWeekChart();
+
+  // ----- Today's team activity timeline -----
+  async function loadTeamActivity() {
+    const todayKey = melDateKey();
+    const usnap = await getDocs(query(collection(db, "users"), where("role", "==", "contractor")));
+    const usersByUid = {};
+    usnap.forEach(d => usersByUid[d.id] = d.data());
+
+    const teSnap = await getDocs(query(collection(db, "timeEntries"), where("date", "==", todayKey)));
+    const events = [];
+    teSnap.forEach(d => {
+      const e = d.data();
+      const u = usersByUid[e.uid];
+      const name = u?.name || u?.email || "?";
+      const start = e.clockInUTC?.toDate?.();
+      const end   = e.clockOutUTC?.toDate?.();
+      if (start) events.push({ t: start, kind: "start", actor: name, label: "Clocked in" });
+      if (end)   events.push({ t: end,   kind: "end",   actor: name, label: "Clocked out", meta: e.hoursWorked != null ? `worked ${fmtHours(e.hoursWorked)}` : "" });
+      (e.breaks || []).forEach(b => {
+        const s = b.startUTC?.toDate?.();
+        const en = b.endUTC?.toDate?.();
+        if (s)  events.push({ t: s,  kind: "brk",    actor: name, label: "Took a break" });
+        if (en) events.push({ t: en, kind: "resume", actor: name, label: "Resumed work", meta: `break ${b.minutes != null ? Math.round(b.minutes) + "m" : ""}` });
+      });
+    });
+    // Pull in-progress break for any currently clocked-in user
+    Object.entries(usersByUid).forEach(([uid, u]) => {
+      if (u.currentBreakStartAt?.toDate) {
+        events.push({ t: u.currentBreakStartAt.toDate(), kind: "brk", actor: u.name || u.email, label: "Took a break" });
+      }
+    });
+    events.sort((a, b) => b.t - a.t); // newest first
+
+    const el = document.getElementById("teamActivityTimeline");
+    if (events.length === 0) {
+      el.classList.add("empty");
+      el.innerHTML = "No activity today yet.";
+      return;
+    }
+    el.classList.remove("empty");
+    el.innerHTML = `<div class="timeline">${events.map(ev => `
+      <div class="timeline-row ${ev.kind}">
+        <div class="ts">${melTimeShort(ev.t)}</div>
+        <div class="dot-col"><div class="dot"></div></div>
+        <div class="who-line">
+          <span class="actor">${escapeHtml(ev.actor)}</span>
+          <span class="act">${ev.label}</span>
+          ${ev.meta ? `<span class="meta">· ${escapeHtml(ev.meta)}</span>` : ""}
+        </div>
+      </div>
+    `).join("")}</div>`;
+  }
+  loadTeamActivity();
+  setInterval(loadTeamActivity, 60_000);
 
   // ----- Leave today + next 7 days -----
   async function loadLeaveSoon() {
@@ -357,6 +420,7 @@
   // Grouped variant — multiple datasets (Worked vs Break)
   window.chartOptionsGrouped = (yLabel) => ({
     responsive: true, maintainAspectRatio: false,
+    interaction: { intersect: false, mode: "index" },
     plugins: {
       legend: {
         display: true, position: "top", align: "end",
@@ -366,9 +430,9 @@
         }
       },
       tooltip: {
-        backgroundColor: "#0B1220", padding: 10, cornerRadius: 8,
-        titleFont: { family: "Inter", weight: "600" }, bodyFont: { family: "Inter" },
-        callbacks: { label: (ctx) => `${ctx.dataset.label}: ${fmtHM(ctx.parsed.y)}` }
+        backgroundColor: "#0B1220", padding: 12, cornerRadius: 8,
+        titleFont: { family: "Inter", weight: "600", size: 13 }, bodyFont: { family: "Inter", size: 12 },
+        callbacks: { label: (ctx) => `${ctx.dataset.label.split(" · ")[0]}: ${fmtHM(ctx.parsed.y)}` }
       }
     },
     scales: {

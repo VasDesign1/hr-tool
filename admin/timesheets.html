@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../assets/styles.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
 </head>
 <body>
 <header class="topbar"></header>
@@ -35,6 +36,23 @@
     </div>
     <div id="dayLabel" class="muted" style="font-size:13px; margin-bottom:10px"></div>
     <div id="dayList" class="empty">Loading…</div>
+  </div>
+
+  <!-- Period summary with charts -->
+  <div class="card">
+    <div class="toolbar">
+      <h2>Period summary</h2>
+      <div class="row">
+        <select id="periodPick" style="min-width:140px">
+          <option value="day">Daily</option>
+          <option value="week" selected>This week</option>
+          <option value="month">This month</option>
+          <option value="quarter">Last 90 days</option>
+        </select>
+      </div>
+    </div>
+    <div id="periodMeta" class="muted" style="font-size:13px; margin-bottom:10px">—</div>
+    <div style="position:relative; height:280px"><canvas id="periodChart"></canvas></div>
   </div>
 
   <!-- History drill-down -->
@@ -109,7 +127,7 @@
   import { db } from "../assets/firebase-init.js";
   import { requireRole } from "../assets/auth-router.js";
   import { renderAdminNav, escapeHtml } from "../assets/admin-nav.js";
-  import { fmtHours, fmtDay, lastNDateKeys, melTimeShort, melDateKey, hoursBetween, MEL_TZ } from "../assets/time.js";
+  import { fmtHours, fmtDay, lastNDateKeys, melTimeShort, melDateKey, hoursBetween, MEL_TZ, fmtAU, fmtAUDow, fmtAUShort } from "../assets/time.js";
   import {
     collection, query, where, getDocs, orderBy, doc, addDoc, updateDoc, deleteDoc, serverTimestamp, Timestamp
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
@@ -527,6 +545,122 @@
 
   userPick.addEventListener("change", loadHistory);
   rangePick.addEventListener("change", loadHistory);
+
+  // ===================================================================
+  // PERIOD SUMMARY (daily / week / month / 90 days)
+  // ===================================================================
+  function fmtHM(hours) {
+    if (hours == null || isNaN(hours)) return "—";
+    const totalMins = Math.round(Math.abs(hours) * 60);
+    const sign = hours < 0 ? "-" : "";
+    const h = Math.floor(totalMins / 60), m = totalMins % 60;
+    if (h === 0 && m === 0) return "0m";
+    if (h === 0) return `${sign}${m}m`;
+    if (m === 0) return `${sign}${h}h`;
+    return `${sign}${h}h ${m}m`;
+  }
+  function periodRange(kind) {
+    const todayKey = melDateKey();
+    const [y, m, d] = todayKey.split("-").map(Number);
+    const today = Date.UTC(y, m - 1, d);
+    if (kind === "day") {
+      return { start: todayKey, end: todayKey };
+    }
+    if (kind === "week") {
+      const dt = new Date(today);
+      const dow = (dt.getUTCDay() + 6) % 7; // Mon = 0
+      const mon = today - dow * 86_400_000;
+      const monDt = new Date(mon);
+      const monKey = `${monDt.getUTCFullYear()}-${String(monDt.getUTCMonth()+1).padStart(2,"0")}-${String(monDt.getUTCDate()).padStart(2,"0")}`;
+      return { start: monKey, end: todayKey };
+    }
+    if (kind === "month") {
+      const start = `${y}-${String(m).padStart(2,"0")}-01`;
+      return { start, end: todayKey };
+    }
+    // quarter = last 90 days
+    const startMs = today - 89 * 86_400_000;
+    const s = new Date(startMs);
+    const sKey = `${s.getUTCFullYear()}-${String(s.getUTCMonth()+1).padStart(2,"0")}-${String(s.getUTCDate()).padStart(2,"0")}`;
+    return { start: sKey, end: todayKey };
+  }
+  function keysBetween(startKey, endKey) {
+    const [sy, sm, sd] = startKey.split("-").map(Number);
+    const [ey, em, ed] = endKey.split("-").map(Number);
+    let cur = Date.UTC(sy, sm - 1, sd);
+    const end = Date.UTC(ey, em - 1, ed);
+    const out = [];
+    while (cur <= end) {
+      const dt = new Date(cur);
+      out.push(`${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,"0")}-${String(dt.getUTCDate()).padStart(2,"0")}`);
+      cur += 86_400_000;
+    }
+    return out;
+  }
+
+  const PALETTE = ["#047857","#4F46E5","#0891B2","#7C3AED","#D97706","#EC4899"];
+  let periodChart = null;
+  async function loadPeriodSummary() {
+    const kind = document.getElementById("periodPick").value;
+    const { start, end } = periodRange(kind);
+    const keys = keysBetween(start, end);
+    const labels = keys.map(k => kind === "quarter" ? fmtAUShort(k) : fmtAUDow(k));
+
+    const active = users.filter(u => u.active !== false);
+
+    const perUserDaily = await Promise.all(active.map(async (u) => {
+      const teSnap = await getDocs(query(collection(db, "timeEntries"), where("uid", "==", u.uid)));
+      const map = Object.fromEntries(keys.map(k => [k, 0]));
+      let total = 0;
+      teSnap.forEach(d => {
+        const e = d.data();
+        if (e.date >= start && e.date <= end && e.hoursWorked) {
+          map[e.date] = (map[e.date] || 0) + e.hoursWorked;
+          total += e.hoursWorked;
+        }
+      });
+      return { user: u, map, total };
+    }));
+
+    document.getElementById("periodMeta").textContent = `${fmtAU(start)} → ${fmtAU(end)}`;
+
+    const datasets = perUserDaily.map((row, i) => {
+      const c = PALETTE[i % PALETTE.length];
+      return {
+        label: `${(row.user.name || row.user.email).split(" ")[0]} · ${fmtHM(row.total)}`,
+        data: keys.map(k => Number((row.map[k] || 0).toFixed(2))),
+        backgroundColor: c + "99", borderColor: c, borderWidth: 1, borderRadius: 4,
+        maxBarThickness: kind === "quarter" ? 6 : kind === "month" ? 10 : kind === "week" ? 28 : 40
+      };
+    });
+
+    if (periodChart) periodChart.destroy();
+    periodChart = new Chart(document.getElementById("periodChart"), {
+      type: "bar",
+      data: { labels, datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { intersect: false, mode: "index" },
+        plugins: {
+          legend: { display: true, position: "top", align: "end", labels: { boxWidth: 12, boxHeight: 12, padding: 14, usePointStyle: true, color: "#1F2937", font: { family: "Inter", size: 12, weight: "500" } } },
+          tooltip: {
+            backgroundColor: "#0B1220", padding: 12, cornerRadius: 8,
+            titleFont: { family: "Inter", weight: "600", size: 13 }, bodyFont: { family: "Inter", size: 12 },
+            callbacks: {
+              title: (items) => fmtAUDow(keys[items[0].dataIndex]),
+              label: (ctx) => `${ctx.dataset.label.split(" · ")[0]}: ${fmtHM(ctx.parsed.y)}`
+            }
+          }
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 11 }, autoSkip: true, autoSkipPadding: 6, maxRotation: 60 } },
+          y: { beginAtZero: true, grid: { color: "#E6E8EE", drawBorder: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 12 }, callback: (v) => fmtHM(v) }, title: { display: true, text: "Hours", color: "#64748B", font: { family: "Inter", size: 12 } } }
+        }
+      }
+    });
+  }
+  document.getElementById("periodPick").addEventListener("change", loadPeriodSummary);
+  loadPeriodSummary();
 
   // ===================================================================
   // INITIAL LOAD
