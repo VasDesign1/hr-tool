@@ -224,29 +224,41 @@
     const monKey = startOfWeekKey();
     const todayKey = melDateKey();
 
-    const hoursByUid = {};
-    const breakHByUid = {};
-    await Promise.all(contractors.map(async (c) => {
+    // Build a day-keys list Mon → today
+    const weekKeys = [];
+    {
+      const [sy, sm, sd] = monKey.split("-").map(Number);
+      const [ey, em, ed] = todayKey.split("-").map(Number);
+      let cur = Date.UTC(sy, sm - 1, sd);
+      const end = Date.UTC(ey, em - 1, ed);
+      while (cur <= end) {
+        const dt = new Date(cur);
+        weekKeys.push(`${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,"0")}-${String(dt.getUTCDate()).padStart(2,"0")}`);
+        cur += 86_400_000;
+      }
+    }
+
+    const PALETTE = ["#047857","#4F46E5","#0891B2","#7C3AED","#D97706","#EC4899"];
+    const perUserDaily = await Promise.all(contractors.map(async (c) => {
       const teSnap = await getDocs(query(collection(db, "timeEntries"), where("uid", "==", c.uid)));
-      let h = 0, bm = 0;
+      const map = Object.fromEntries(weekKeys.map(k => [k, 0]));
+      let total = 0;
       teSnap.forEach(d => {
         const e = d.data();
-        if (e.date >= monKey && e.date <= todayKey) {
-          if (e.hoursWorked) h += e.hoursWorked;
-          if (e.breakMinutes) bm += e.breakMinutes;
+        if (e.date >= monKey && e.date <= todayKey && e.hoursWorked) {
+          map[e.date] = (map[e.date] || 0) + e.hoursWorked;
+          total += e.hoursWorked;
         }
       });
-      hoursByUid[c.uid] = h;
-      breakHByUid[c.uid] = bm / 60;
+      return { user: c, map, total };
     }));
 
-    const total = Object.values(hoursByUid).reduce((s, h) => s + h, 0);
-    document.getElementById("statWeekHours").textContent = fmtHours(total);
-    document.getElementById("statWeekSub").textContent = `${monKey} → today`;
+    const teamTotal = perUserDaily.reduce((s, r) => s + r.total, 0);
+    document.getElementById("statWeekHours").textContent = fmtHours(teamTotal);
+    document.getElementById("statWeekSub").textContent = `${fmtAU(monKey)} → ${fmtAU(todayKey)}`;
 
-    // Tooltip — per-contractor breakdown
-    const breakdownRows = contractors
-      .map(c => ({ name: c.name || c.email, hours: hoursByUid[c.uid] || 0 }))
+    const breakdownRows = perUserDaily
+      .map(r => ({ name: r.user.name || r.user.email, hours: r.total }))
       .filter(r => r.hours > 0)
       .sort((a, b) => b.hours - a.hours);
     const setTip2 = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
@@ -254,31 +266,39 @@
       ? `<span class="head">Team hours · this week</span><ul>${breakdownRows.map(r => `<li>${escapeHtml(r.name)}<span class="right">${fmtHours(r.hours)}</span></li>`).join("")}</ul>`
       : `<span class="head">Team hours · this week</span><span class="none">No hours yet this week.</span>`);
 
-    // Compute the actual dates in the current week for the subtitle
-    document.getElementById("statWeekSub").textContent = `${fmtAU(monKey)} → ${fmtAU(todayKey)}`;
+    const datasets = perUserDaily.map((row, i) => {
+      const c = PALETTE[i % PALETTE.length];
+      return {
+        label: `${(row.user.name || row.user.email).split(" ")[0]} · ${fmtHours(row.total)}`,
+        data: weekKeys.map(k => Number((row.map[k] || 0).toFixed(2))),
+        backgroundColor: c + "99", borderColor: c, borderWidth: 1, borderRadius: 4, maxBarThickness: 28
+      };
+    });
 
     const ctx = document.getElementById("weekChart");
     if (window._wkChart) window._wkChart.destroy();
     window._wkChart = new Chart(ctx, {
       type: "bar",
-      data: {
-        labels: contractors.map(c => (c.name || c.email).split(" ")[0]),
-        datasets: [
-          {
-            label: `Hours worked · total ${fmtHours(Object.values(hoursByUid).reduce((s, v) => s + v, 0))}`,
-            data: contractors.map(c => Number((hoursByUid[c.uid] || 0).toFixed(3))),
-            backgroundColor: "#04785799",
-            borderColor: "#047857", borderWidth: 1, borderRadius: 6, maxBarThickness: 36
-          },
-          {
-            label: `Break time · total ${fmtHours(Object.values(breakHByUid).reduce((s, v) => s + v, 0))}`,
-            data: contractors.map(c => Number((breakHByUid[c.uid] || 0).toFixed(3))),
-            backgroundColor: "#7C3AED99",
-            borderColor: "#7C3AED", borderWidth: 1, borderRadius: 6, maxBarThickness: 36
+      data: { labels: weekKeys.map(k => fmtAUDow(k)), datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { intersect: false, mode: "index" },
+        plugins: {
+          legend: { display: true, position: "top", align: "end", labels: { boxWidth: 12, boxHeight: 12, padding: 14, usePointStyle: true, color: "#1F2937", font: { family: "Inter", size: 12, weight: "500" } } },
+          tooltip: {
+            backgroundColor: "#0B1220", padding: 12, cornerRadius: 8,
+            titleFont: { family: "Inter", weight: "600", size: 13 }, bodyFont: { family: "Inter", size: 12 },
+            callbacks: {
+              title: (items) => fmtAUDow(weekKeys[items[0].dataIndex]),
+              label: (ctx) => `${ctx.dataset.label.split(" · ")[0]}: ${fmtHM(ctx.parsed.y)}`
+            }
           }
-        ]
-      },
-      options: chartOptionsGrouped("Hours")
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 12 } } },
+          y: { beginAtZero: true, grid: { color: "#E6E8EE", drawBorder: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 12 }, callback: (v) => fmtHM(v) }, title: { display: true, text: "Hours", color: "#64748B", font: { family: "Inter", size: 12 } } }
+        }
+      }
     });
   }
   loadWeekChart();
