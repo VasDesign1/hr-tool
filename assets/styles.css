@@ -362,6 +362,46 @@ a:hover { text-decoration: underline; }
 /* Vibrant chart container — full width, subtle inset */
 canvas.chart-vivid { width: 100% !important; }
 
+/* Per-user activity grid — side-by-side columns on the admin dashboard */
+.activity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+.activity-col {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 14px 16px;
+}
+.activity-col-header {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.activity-col-header .avatar {
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  font-weight: 700; font-size: 12px;
+  color: white;
+}
+.activity-col-header .name {
+  font-weight: 600;
+  font-size: 14px;
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.activity-col .empty-state {
+  padding: 22px 8px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-style: italic;
+}
+
 /* Activity timeline */
 .timeline { display: flex; flex-direction: column; gap: 0; position: relative; padding-left: 8px; }
 .timeline-row { display: grid; grid-template-columns: 70px 18px 1fr; gap: 12px; align-items: center; padding: 7px 0; position: relative; }
@@ -691,49 +731,57 @@ table.data td .actions button { padding: 6px 11px; font-size: 12px; }
 
 .session-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .session-chip {
-  display: inline-flex; align-items: center; gap: 8px;
-  padding: 5px 10px;
-  background: rgba(20,184,166,.10);
-  border: 1px solid rgba(20,184,166,.35);
-  color: #0F766E;
-  border-radius: 8px;
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 12px 5px 10px;
+  background: #ECFDF5;                            /* mint */
+  border: 1px solid #34D399;
+  border-left: 5px solid #14B8A6;                 /* thick teal left bar */
+  color: #115E59;
+  border-radius: 7px;
   font-size: 12px;
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
   font-variant-numeric: tabular-nums;
+  font-weight: 500;
   cursor: pointer;
-  transition: background .12s, border-color .12s, box-shadow .12s;
+  transition: filter .12s, transform .04s;
 }
-.session-chip:hover { background: rgba(20,184,166,.18); border-color: rgba(20,184,166,.55); }
-.session-chip .arr { color: #14B8A680; }
+.session-chip:hover { filter: brightness(.97); }
+.session-chip:active { transform: translateY(0.5px); }
+.session-chip .arr { color: #14B8A6; }
 .session-chip .dur {
-  color: #0F766E99;
+  color: #0F766E;
   padding-left: 8px;
   margin-left: 2px;
-  border-left: 1px solid rgba(20,184,166,.3);
+  border-left: 1px solid #6EE7B7;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .session-chip.brk {
-  background: rgba(139,92,246,.10);
-  border-color: rgba(139,92,246,.35);
-  color: #6D28D9;
+  background: #F5F3FF;                            /* lavender */
+  border-color: #C4B5FD;
+  border-left: 5px solid #8B5CF6;                 /* thick violet left bar */
+  color: #5B21B6;
 }
-.session-chip.brk:hover { background: rgba(139,92,246,.18); border-color: rgba(139,92,246,.55); }
-.session-chip.brk .arr { color: #8B5CF680; }
+.session-chip.brk::before {
+  content: "☕";
+  font-size: 11px;
+  margin-right: -2px;
+}
+.session-chip.brk .arr { color: #8B5CF6; }
 .session-chip.brk .dur {
-  color: #6D28D999;
-  border-left-color: rgba(139,92,246,.3);
+  color: #6D28D9;
+  border-left-color: #C4B5FD;
 }
 
 .session-chip.open {
-  background: rgba(16,185,129,.10);
-  border-color: rgba(16,185,129,.55);
-  box-shadow: 0 0 0 1px rgba(16,185,129,.25) inset;
+  background: #D1FAE5;
+  border-color: #10B981;
+  border-left: 5px solid #059669;
+  box-shadow: 0 0 0 2px rgba(16,185,129,.18);
 }
-.session-chip.open:hover { background: rgba(16,185,129,.18); }
 .session-chip.open .to { color: #047857; font-weight: 700; }
-.session-chip.open .arr { color: #10B98180; }
+.session-chip.open .arr { color: #10B981; }
 
 .no-sessions { color: var(--muted); font-size: 12px; font-style: italic; }
 
