@@ -39,6 +39,7 @@
       </div>
       <div class="value" id="kpiHours">—</div>
       <div class="sub" id="kpiHoursSub">in selected range</div>
+      <div class="tile-tip" id="tipHours"></div>
     </div>
     <div class="stat indigo">
       <div class="stat-head">
@@ -47,6 +48,7 @@
       </div>
       <div class="value" id="kpiDays">—</div>
       <div class="sub" id="kpiDaysSub">unique days</div>
+      <div class="tile-tip" id="tipDays"></div>
     </div>
     <div class="stat cyan">
       <div class="stat-head">
@@ -55,6 +57,7 @@
       </div>
       <div class="value" id="kpiAvg">—</div>
       <div class="sub" id="kpiAvgSub">hours</div>
+      <div class="tile-tip" id="tipAvg"></div>
     </div>
     <div class="stat violet">
       <div class="stat-head">
@@ -63,6 +66,7 @@
       </div>
       <div class="value" id="kpiBreak">—</div>
       <div class="sub" id="kpiBreakSub">total breaks</div>
+      <div class="tile-tip" id="tipBreak"></div>
     </div>
   </div>
 
@@ -95,7 +99,7 @@
   import { db } from "../assets/firebase-init.js";
   import { requireRole } from "../assets/auth-router.js";
   import { renderAdminNav, escapeHtml } from "../assets/admin-nav.js";
-  import { fmtHours, melDateKey, lastNDateKeys, fmtDay, MEL_TZ } from "../assets/time.js";
+  import { fmtHours, melDateKey, lastNDateKeys, fmtDay, MEL_TZ, fmtAU, fmtAUShort, fmtAUDow } from "../assets/time.js";
   import { collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const { profile } = await requireRole("admin");
@@ -139,21 +143,28 @@
     if (m === 0) return `${sign}${h}h`;
     return `${sign}${h}h ${m}m`;
   }
-  function chartBase(yLabel, grouped, isCount) {
+  function chartBase(yLabel, grouped, isCount, orderedKeys) {
     return {
       responsive: true, maintainAspectRatio: false,
+      interaction: { intersect: false, mode: "index" },
       plugins: {
         legend: grouped
           ? { display: true, position: "top", align: "end", labels: { boxWidth: 12, boxHeight: 12, padding: 14, usePointStyle: true, color: "#1F2937", font: { family: "Inter", size: 12, weight: "500" } } }
           : { display: false },
         tooltip: {
-          backgroundColor: "#0B1220", padding: 10, cornerRadius: 8,
-          titleFont: { family: "Inter", weight: "600" }, bodyFont: { family: "Inter" },
-          callbacks: { label: (ctx) => `${grouped ? ctx.dataset.label + ": " : ""}${isCount ? ctx.parsed.y : fmtHM(ctx.parsed.y)}` }
+          backgroundColor: "#0B1220", padding: 12, cornerRadius: 8,
+          titleFont: { family: "Inter", weight: "600", size: 13 }, bodyFont: { family: "Inter", size: 12 },
+          callbacks: {
+            title: (items) => {
+              if (orderedKeys) return fmtAUDow(orderedKeys[items[0].dataIndex]);
+              return items[0].label;
+            },
+            label: (ctx) => `${grouped ? ctx.dataset.label.split(" · ")[0] + ": " : ""}${isCount ? ctx.parsed.y : fmtHM(ctx.parsed.y)}`
+          }
         }
       },
       scales: {
-        x: { grid: { display: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 11 } } },
+        x: { grid: { display: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 11 }, autoSkip: true, autoSkipPadding: 6, maxRotation: 60 } },
         y: {
           beginAtZero: true,
           grid: { color: "#E6E8EE", drawBorder: false },
@@ -205,6 +216,26 @@
       document.getElementById("kpiAvg").textContent = daySet.size > 0 ? fmtHours(totalHours / daySet.size) : "—";
       document.getElementById("kpiBreak").textContent = fmtMinutes(totalBreakMins);
 
+      const setTip = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+      const dayTotals = {};
+      inRange.forEach(e => { if (e.hoursWorked) dayTotals[e.date] = (dayTotals[e.date] || 0) + e.hoursWorked; });
+      const topDays = Object.entries(dayTotals).sort((a, b) => b[1] - a[1]).slice(0, 6);
+      setTip("tipHours", topDays.length
+        ? `<span class="head">Top hours days</span><ul>${topDays.map(([k, h]) => `<li>${fmtAU(k)}<span class="right">${fmtHours(h)}</span></li>`).join("")}</ul>`
+        : "");
+      setTip("tipDays", daySet.size
+        ? `<span class="head">Recent worked days</span><ul>${[...daySet].sort().reverse().slice(0, 8).map(k => `<li>${fmtAU(k)}<span class="right">${fmtHours(dayTotals[k] || 0)}</span></li>`).join("")}</ul>`
+        : "");
+      const dayBreaks = {};
+      inRange.forEach(e => { if (e.breakMinutes) dayBreaks[e.date] = (dayBreaks[e.date] || 0) + e.breakMinutes; });
+      const topBreaks = Object.entries(dayBreaks).sort((a, b) => b[1] - a[1]).slice(0, 6);
+      setTip("tipBreak", topBreaks.length
+        ? `<span class="head">Most break time</span><ul>${topBreaks.map(([k, m]) => `<li>${fmtAU(k)}<span class="right">${fmtMinutes(m)}</span></li>`).join("")}</ul>`
+        : `<span class="head">Break time</span><span class="none">No breaks logged.</span>`);
+      setTip("tipAvg", daySet.size
+        ? `<span class="head">Avg over worked days</span><span class="none">${fmtHours(totalHours / daySet.size)} per day · ${daySet.size} day(s)</span>`
+        : "");
+
       const dailyData = {}, breakData = {};
       orderedKeys.forEach(k => { dailyData[k] = 0; breakData[k] = 0; });
       inRange.forEach(e => {
@@ -217,7 +248,7 @@
       charts.daily = new Chart(document.getElementById("dailyChart"), {
         type: "bar",
         data: {
-          labels: orderedKeys.map(k => k.slice(5)),
+          labels: orderedKeys.map(k => n <= 14 ? fmtAUDow(k) : fmtAUShort(k)),
           datasets: [
             { label: `Hours worked · total ${fmtHM(workedTotal)}`, data: orderedKeys.map(k => Number(dailyData[k].toFixed(2))), backgroundColor: "#04785799", borderColor: "#047857", borderWidth: 1, borderRadius: 4, maxBarThickness: barW },
             { label: `Break time · total ${fmtHM(breakTotal)}`,   data: orderedKeys.map(k => Number(breakData[k].toFixed(2))), backgroundColor: "#7C3AED99", borderColor: "#7C3AED", borderWidth: 1, borderRadius: 4, maxBarThickness: barW }
@@ -236,7 +267,7 @@
       charts.clockIn = new Chart(document.getElementById("clockInChart"), {
         type: "bar",
         data: { labels: hourLabels, datasets: [{ label: "Clock-ins", data: buckets, backgroundColor: "#4F46E599", borderColor: "#4F46E5", borderWidth: 1, borderRadius: 6, maxBarThickness: 28 }] },
-        options: chartBase("Sessions")
+        options: chartBase("Sessions", false, true)
       });
 
       const dowSum = new Array(7).fill(0), dowDays = new Array(7).fill(0), seen = new Map();
@@ -252,7 +283,7 @@
       charts.dow = new Chart(document.getElementById("dowChart"), {
         type: "bar",
         data: { labels: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], datasets: [{ label: "Avg hours", data: dowAvg.map(v => Number(v.toFixed(2))), backgroundColor: "#0891B299", borderColor: "#0891B2", borderWidth: 1, borderRadius: 6, maxBarThickness: 60 }] },
-        options: chartBase("Avg hours / day")
+        options: chartBase("Avg hours / day", false)
       });
 
     } else {
@@ -272,6 +303,19 @@
       document.getElementById("kpiDaysSub").textContent = `unique days`;
       document.getElementById("kpiAvg").textContent = daySet.size > 0 ? fmtHours(teamHours / daySet.size) : "—";
       document.getElementById("kpiBreak").textContent = fmtMinutes(teamBreak);
+
+      const setTip = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+      const perUserTotals = activeUsers.map((u, i) => {
+        const h = perUserEntries[i].reduce((s, e) => s + (e.hoursWorked || 0), 0);
+        const bm = perUserEntries[i].reduce((s, e) => s + (e.breakMinutes || 0), 0);
+        return { name: u.name || u.email, h, bm };
+      }).sort((a, b) => b.h - a.h);
+      setTip("tipHours", `<span class="head">By contractor</span><ul>${perUserTotals.map(r => `<li>${escapeHtml(r.name)}<span class="right">${fmtHours(r.h)}</span></li>`).join("")}</ul>`);
+      setTip("tipBreak", `<span class="head">By contractor</span><ul>${perUserTotals.map(r => `<li>${escapeHtml(r.name)}<span class="right">${fmtMinutes(r.bm)}</span></li>`).join("")}</ul>`);
+      setTip("tipDays", `<span class="head">Distinct days team worked</span><span class="none">${daySet.size} unique calendar day(s) in the range</span>`);
+      setTip("tipAvg", daySet.size
+        ? `<span class="head">Team avg</span><span class="none">${fmtHours(teamHours / daySet.size)} per day across the team</span>`
+        : "");
 
       // Daily chart — grouped: one dataset per contractor (with totals in legend)
       const dailyDatasets = activeUsers.map((u, i) => {
@@ -310,7 +354,7 @@
       charts.clockIn = new Chart(document.getElementById("clockInChart"), {
         type: "bar",
         data: { labels: hourLabels, datasets: clockInDatasets },
-        options: chartBase("Sessions", true)
+        options: chartBase("Sessions", true, true)
       });
 
       // Day-of-week chart — grouped per contractor (avg hours / day)
@@ -331,11 +375,11 @@
       charts.dow = new Chart(document.getElementById("dowChart"), {
         type: "bar",
         data: { labels: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], datasets: dowDatasets },
-        options: chartBase("Avg hours / day", true)
+        options: chartBase("Avg hours / day", true, false)
       });
     }
 
-    document.getElementById("dailyMeta").textContent = `${oldestKey} → ${todayKey}`;
+    document.getElementById("dailyMeta").textContent = `${fmtAU(oldestKey)} → ${fmtAU(todayKey)}`;
   }
 
   async function loadTeamChart() {
@@ -383,7 +427,7 @@
           }
         ]
       },
-      options: chartBase("Hours", true)
+      options: chartBase("Hours", true, false)
     });
   }
 
