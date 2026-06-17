@@ -737,6 +737,47 @@ table.data td .actions button { padding: 6px 11px; font-size: 12px; }
 
 .no-sessions { color: var(--muted); font-size: 12px; font-style: italic; }
 
+/* Banner — for forgot-to-clock-off auto-close + still-in-past-window warning */
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px 18px;
+  border-radius: var(--r);
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.banner .icon {
+  flex-shrink: 0;
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  display: grid; place-items: center;
+}
+.banner .body { flex: 1; min-width: 0; }
+.banner .title { font-weight: 600; font-size: 14px; margin-bottom: 2px; }
+.banner .desc { color: var(--muted); font-size: 13px; }
+.banner .actions { margin-left: 12px; display: flex; gap: 8px; }
+.banner button { padding: 7px 12px; font-size: 12.5px; }
+.banner.warn {
+  background: #FFF7ED;
+  border-color: #FED7AA;
+}
+.banner.warn .icon { background: #FED7AA; color: #9A3412; }
+.banner.warn .title { color: #9A3412; }
+.banner.info {
+  background: #EFF6FF;
+  border-color: #BFDBFE;
+}
+.banner.info .icon { background: #BFDBFE; color: #1E3A8A; }
+.banner.info .title { color: #1E3A8A; }
+.banner.alert {
+  background: #FEF2F2;
+  border-color: #FECACA;
+}
+.banner.alert .icon { background: #FECACA; color: #991B1B; }
+.banner.alert .title { color: #991B1B; }
+
 /* Clickable names */
 a.name-link { color: var(--brand); font-weight: 600; text-decoration: none; }
 a.name-link:hover { text-decoration: underline; }

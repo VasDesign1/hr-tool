@@ -40,6 +40,9 @@
     </div>
   </div>
 
+  <!-- Banner area: auto-close notice, still-in-past-window warning, etc. -->
+  <div id="bannerArea"></div>
+
   <!-- Stat tiles -->
   <div class="stat-grid">
     <div class="stat brand">
@@ -124,7 +127,7 @@
   import { auth, db } from "../assets/firebase-init.js";
   import { requireRole, logout } from "../assets/auth-router.js";
   import { getInitials, escapeHtml } from "../assets/admin-nav.js";
-  import { melClock, localClock, melDateKey, melTimeShort, fmtHours, fmtDay, fmtDateShort } from "../assets/time.js";
+  import { melClock, localClock, melDateKey, melTimeShort, fmtHours, fmtDay, fmtDateShort, parseMelTime, MEL_TZ } from "../assets/time.js";
   import { computeBalance, fmtLeave } from "../assets/leave.js";
   import {
     collection, query, where, getDocs, addDoc, doc, getDoc, updateDoc,
@@ -500,25 +503,169 @@
   }
 
   // ====================================================================
+  // FORGOT-TO-CLOCK-OFF DETECTION + AUTO-CLOSE
+  // ====================================================================
+  const WORK_WINDOW_END = "16:30"; // configurable later via settings
+
+  function bannerHtml({ kind, icon, title, desc, actionsHtml, dataId }) {
+    return `
+      <div class="banner ${kind}" data-banner-id="${dataId || ""}">
+        <div class="icon">${icon}</div>
+        <div class="body">
+          <div class="title">${title}</div>
+          <div class="desc">${desc}</div>
+        </div>
+        <div class="actions">${actionsHtml || ""}<button class="ghost" data-banner-dismiss>Dismiss</button></div>
+      </div>
+    `;
+  }
+
+  // Auto-close a stale shift left open from a previous Melbourne day.
+  // Close time = MIN(16:30 Mel of clock-in day, clockIn + 8h).
+  async function maybeAutoCloseStaleShift() {
+    if (!currentEntryId) return null;
+    const eSnap = await getDoc(doc(db, "timeEntries", currentEntryId));
+    if (!eSnap.exists() || eSnap.data().clockOutUTC) return null;
+
+    const e = eSnap.data();
+    const clockInDate = e.clockInUTC.toDate();
+    const clockInKey = melDateKey(clockInDate);
+    const todayKey = melDateKey();
+    if (clockInKey >= todayKey) return null; // shift is from today; nothing to auto-close
+
+    // Compute close time in UTC
+    const close1630Ms = parseMelTime(clockInKey, WORK_WINDOW_END);
+    const eightHoursLaterMs = clockInDate.getTime() + 8 * 3_600_000;
+    const closeMs = clockInDate.getTime() >= close1630Ms
+      ? eightHoursLaterMs               // started after 16:30 → cap at 8h
+      : Math.min(close1630Ms, eightHoursLaterMs);
+    const closeAt = new Date(closeMs);
+
+    // If they were also on a break when they walked away, close the break first.
+    let breaksArr = e.breaks || [];
+    let breakMinsField = e.breakMinutes || 0;
+    if (e.currentBreakStartAt || currentBreakStartMs) {
+      const breakStartMs = currentBreakStartMs || e.currentBreakStartAt?.toMillis?.();
+      if (breakStartMs && breakStartMs < closeMs) {
+        const dur = (closeMs - breakStartMs) / 60_000;
+        breaksArr = [...breaksArr, {
+          startUTC: Timestamp.fromMillis(breakStartMs),
+          endUTC: Timestamp.fromDate(closeAt),
+          minutes: dur,
+          autoClosed: true
+        }];
+        breakMinsField += dur;
+      }
+    }
+
+    const workMs = closeMs - clockInDate.getTime() - breakMinsField * 60_000;
+    const hoursWorked = Math.max(0, workMs / 3_600_000);
+
+    await updateDoc(doc(db, "timeEntries", currentEntryId), {
+      clockOutUTC: Timestamp.fromDate(closeAt),
+      hoursWorked,
+      breaks: breaksArr,
+      breakMinutes: breakMinsField,
+      autoClosed: true,
+      autoClosedAt: serverTimestamp(),
+      autoCloseNote: `Auto-closed at ${WORK_WINDOW_END} Mel because contractor didn't clock off.`,
+      source: "auto"
+    });
+    await updateDoc(doc(db, "users", user.uid), {
+      currentEntryId: null,
+      clockedInAt: null,
+      currentBreakStartAt: null
+    });
+
+    // Clear local state so the rest of init treats us as clocked-out
+    currentEntryId = null;
+    currentStartMs = null;
+    currentBreakStartMs = null;
+    priorBreakMs = 0;
+
+    return { closedAt: closeAt, clockInDate, hoursWorked };
+  }
+
+  // Warn if currently clocked in and Melbourne time is past 17:30 (grace 1h)
+  function maybeWarnStillIn() {
+    if (!currentEntryId) return false;
+    const melTimeStr = new Date().toLocaleTimeString("en-AU", { timeZone: MEL_TZ, hour12: false, hour: "2-digit", minute: "2-digit" });
+    const [h, m] = melTimeStr.split(":").map(Number);
+    const mins = h * 60 + m;
+    return mins >= (17 * 60 + 30); // past 17:30 Mel
+  }
+
+  function renderBanners({ autoClosed, stillInWarn }) {
+    const area = document.getElementById("bannerArea");
+    if (!area) return;
+    const parts = [];
+
+    if (autoClosed) {
+      parts.push(bannerHtml({
+        kind: "warn",
+        icon: "⏰",
+        title: "Your shift was auto-closed",
+        desc: `You forgot to clock off after ${fmtDateShort(autoClosed.clockInDate)}. We closed it at ${melTimeShort(autoClosed.closedAt)} Melbourne · ${fmtHours(autoClosed.hoursWorked)} worked. Tell admin if the time should be different.`,
+        actionsHtml: ""
+      }));
+    }
+    if (stillInWarn) {
+      parts.push(bannerHtml({
+        kind: "alert",
+        icon: "⚠",
+        title: "You're still clocked in past working hours",
+        desc: `It's after 17:30 Melbourne. Don't forget to end your shift before signing off — if you leave it open it'll be auto-closed at 16:30 next time you open the app.`,
+        actionsHtml: `<button id="bannerEndShiftBtn">End shift now</button>`,
+        dataId: "still-in"
+      }));
+    }
+    area.innerHTML = parts.join("");
+
+    // Wire dismiss
+    area.querySelectorAll("[data-banner-dismiss]").forEach(btn => {
+      btn.addEventListener("click", () => btn.closest(".banner").remove());
+    });
+    const endNow = document.getElementById("bannerEndShiftBtn");
+    if (endNow) endNow.addEventListener("click", endShift);
+  }
+
+  // ====================================================================
   // INITIAL LOAD
   // ====================================================================
   async function init() {
+    let autoClosed = null;
+
     if (currentEntryId) {
       const eSnap = await getDoc(doc(db, "timeEntries", currentEntryId));
       if (eSnap.exists() && !eSnap.data().clockOutUTC) {
         const e = eSnap.data();
-        currentStartMs = e.clockInUTC.toDate().getTime();
-        priorBreakMs = (e.breakMinutes || 0) * 60_000;
+        // If clock-in is from a previous Melbourne day → auto-close
+        const clockInKey = melDateKey(e.clockInUTC.toDate());
+        if (clockInKey < melDateKey()) {
+          try { autoClosed = await maybeAutoCloseStaleShift(); }
+          catch (err) { console.error("auto-close failed:", err); }
+        } else {
+          currentStartMs = e.clockInUTC.toDate().getTime();
+          priorBreakMs = (e.breakMinutes || 0) * 60_000;
+        }
       } else {
         currentEntryId = null; currentStartMs = null; currentBreakStartMs = null; priorBreakMs = 0;
         try { await updateDoc(doc(db, "users", user.uid), { currentEntryId: null, clockedInAt: null, currentBreakStartAt: null }); } catch {}
       }
     }
+
     try { await refreshTodayMetrics(); } catch (e) { console.error("refreshTodayMetrics:", e); }
     try { await refreshLeavePreview(); } catch (e) { console.error("refreshLeavePreview:", e); }
     renderShiftState();
+    renderBanners({ autoClosed, stillInWarn: maybeWarnStillIn() });
     tickClocks();
     setInterval(tickClocks, 1000);
+    // Re-check still-in warning each minute
+    setInterval(() => {
+      if (!document.querySelector('[data-banner-id="still-in"]') && maybeWarnStillIn()) {
+        renderBanners({ autoClosed: null, stillInWarn: true });
+      }
+    }, 60_000);
   }
   init().catch(e => { console.error("Init failed:", e); alert("Dashboard failed to load: " + (e.message || e.code)); });
 </script>

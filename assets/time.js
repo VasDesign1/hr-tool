@@ -104,6 +104,23 @@ export function melTimeShort(date) {
   });
 }
 
+// Parse "YYYY-MM-DD" + "HH:MM" wall-clock in Melbourne → UTC millis.
+export function parseMelTime(dateKey, timeStr) {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  const [h, min] = timeStr.split(":").map(Number);
+  const guess = new Date(Date.UTC(y, m - 1, d, h, min, 0));
+  const fmt = new Intl.DateTimeFormat("en-US", { timeZone: MEL_TZ, timeZoneName: "shortOffset" });
+  const parts = fmt.formatToParts(guess);
+  const off = parts.find(p => p.type === "timeZoneName")?.value || "GMT+10";
+  const m2 = /GMT([+-])(\d{1,2})(?::?(\d{2}))?/.exec(off);
+  let offsetMin = 0;
+  if (m2) {
+    const sign = m2[1] === "+" ? 1 : -1;
+    offsetMin = sign * (parseInt(m2[2], 10) * 60 + parseInt(m2[3] || "0", 10));
+  }
+  return guess.getTime() - offsetMin * 60_000;
+}
+
 // dateKeys for last N days including today, ordered newest-first.
 export function lastNDateKeys(n) {
   const out = [];

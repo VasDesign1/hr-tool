@@ -73,6 +73,12 @@
     <div id="liveList" class="empty">Loading…</div>
   </div>
 
+  <!-- Recently auto-closed shifts (forgot to clock off) -->
+  <div class="card" id="autoCloseCard" style="display:none">
+    <div class="toolbar"><h2>Recently auto-closed shifts</h2><span class="muted" style="font-size:12px">Contractor forgot to clock off — verify and edit if wrong</span></div>
+    <div id="autoCloseList"></div>
+  </div>
+
   <!-- Today's team activity timeline -->
   <div class="card">
     <div class="toolbar"><h2>Today's activity</h2><span class="muted" style="font-size:12px">All contractor events · Melbourne</span></div>
@@ -364,6 +370,55 @@
   }
   loadTeamActivity();
   setInterval(loadTeamActivity, 60_000);
+
+  // ----- Recently auto-closed shifts (last 7 days) -----
+  async function loadAutoClosed() {
+    const usnap = await getDocs(query(collection(db, "users"), where("role", "==", "contractor")));
+    const usersByUid = {};
+    usnap.forEach(d => usersByUid[d.id] = d.data());
+
+    // Look back 7 days
+    const recentKeys = [];
+    {
+      const t = melDateKey();
+      const [y, m, d] = t.split("-").map(Number);
+      for (let i = 0; i < 7; i++) {
+        const dt = new Date(Date.UTC(y, m - 1, d - i));
+        recentKeys.push(`${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,"0")}-${String(dt.getUTCDate()).padStart(2,"0")}`);
+      }
+    }
+    const oldestKey = recentKeys[recentKeys.length - 1];
+
+    const teSnap = await getDocs(collection(db, "timeEntries"));
+    const entries = [];
+    teSnap.forEach(d => {
+      const e = { id: d.id, ...d.data() };
+      if (e.autoClosed && e.date >= oldestKey) entries.push(e);
+    });
+
+    const cardEl = document.getElementById("autoCloseCard");
+    const listEl = document.getElementById("autoCloseList");
+    if (entries.length === 0) { cardEl.style.display = "none"; return; }
+    cardEl.style.display = "block";
+
+    entries.sort((a, b) => (b.autoClosedAt?.toMillis?.() || 0) - (a.autoClosedAt?.toMillis?.() || 0));
+    listEl.innerHTML = `<table class="data">
+      <thead><tr><th>Contractor</th><th>Date</th><th>Clock-in</th><th>Auto-closed at</th><th>Hours</th><th>Detected</th></tr></thead>
+      <tbody>${entries.map(e => {
+        const u = usersByUid[e.uid];
+        const detected = e.autoClosedAt?.toDate?.()?.toLocaleString("en-AU", { timeZone: "Australia/Melbourne", hour12: false }) || "—";
+        return `<tr>
+          <td>${escapeHtml(u?.name || "—")}</td>
+          <td>${fmtAU(e.date)}</td>
+          <td>${e.clockInUTC ? melTimeShort(e.clockInUTC.toDate()) : "—"}</td>
+          <td>${e.clockOutUTC ? melTimeShort(e.clockOutUTC.toDate()) : "—"}</td>
+          <td><strong>${fmtHours(e.hoursWorked)}</strong></td>
+          <td class="muted" style="font-size:12px">${detected}</td>
+        </tr>`;
+      }).join("")}</tbody>
+    </table>`;
+  }
+  loadAutoClosed();
 
   // ----- Leave today + next 7 days -----
   async function loadLeaveSoon() {
