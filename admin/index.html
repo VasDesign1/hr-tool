@@ -294,20 +294,23 @@
   }
   loadWeekChart();
 
-  // ----- Today's team activity timeline (single chronological list) -----
+  // ----- Today's team activity — one column per contractor side-by-side -----
+  const ACTIVITY_PALETTE = ["#14B8A6","#3B82F6","#EAB308","#EF4444","#8B5CF6","#0EA5E9","#15803D","#F97316","#7E22CE","#94A3B8"];
+
   async function loadTeamActivity() {
     const todayKey = melDateKey();
-    const usnap = await getDocs(query(collection(db, "users"), where("role", "==", "contractor")));
-    const usersByUid = {};
-    usnap.forEach(d => usersByUid[d.id] = d.data());
+    const usnap = await getDocs(query(collection(db, "users"), where("role", "==", "contractor"), where("active", "==", true)));
+    const userList = [];
+    usnap.forEach(d => userList.push({ uid: d.id, ...d.data() }));
+    userList.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
     const teSnap = await getDocs(query(collection(db, "timeEntries"), where("date", "==", todayKey)));
-    const blocks = [];
+    const blocksByUid = Object.fromEntries(userList.map(u => [u.uid, []]));
 
     teSnap.forEach(d => {
       const e = d.data();
-      const u = usersByUid[e.uid];
-      const name = u?.name || u?.email || "?";
+      const u = userList.find(x => x.uid === e.uid);
+      if (!u) return;
       const start = e.clockInUTC?.toDate?.();
       const end   = e.clockOutUTC?.toDate?.();
       if (!start) return;
@@ -319,51 +322,66 @@
 
       let cursor = start;
       sessionBreaks.forEach(b => {
-        if (b.start > cursor) blocks.push({ kind: "work", actor: name, start: cursor, end: b.start });
-        blocks.push({ kind: "brk", actor: name, start: b.start, end: b.end });
+        if (b.start > cursor) blocksByUid[e.uid].push({ kind: "work", start: cursor, end: b.start });
+        blocksByUid[e.uid].push({ kind: "brk", start: b.start, end: b.end });
         cursor = b.end;
       });
       if (end) {
-        if (end > cursor) blocks.push({ kind: "work", actor: name, start: cursor, end });
+        if (end > cursor) blocksByUid[e.uid].push({ kind: "work", start: cursor, end });
       } else {
-        if (u?.currentBreakStartAt?.toDate) {
+        if (u.currentBreakStartAt?.toDate) {
           const brkStart = u.currentBreakStartAt.toDate();
-          if (brkStart > cursor) blocks.push({ kind: "work", actor: name, start: cursor, end: brkStart });
-          blocks.push({ kind: "brk", actor: name, start: brkStart, end: null, ongoing: true });
+          if (brkStart > cursor) blocksByUid[e.uid].push({ kind: "work", start: cursor, end: brkStart });
+          blocksByUid[e.uid].push({ kind: "brk", start: brkStart, end: null, ongoing: true });
         } else {
-          blocks.push({ kind: "work", actor: name, start: cursor, end: null, ongoing: true });
+          blocksByUid[e.uid].push({ kind: "work", start: cursor, end: null, ongoing: true });
         }
       }
     });
 
-    blocks.sort((a, b) => b.start - a.start);
-
     const el = document.getElementById("teamActivityTimeline");
-    if (blocks.length === 0) {
+    if (userList.length === 0) {
       el.classList.add("empty");
-      el.innerHTML = "No activity today yet.";
+      el.innerHTML = "No active contractors.";
       return;
     }
     el.classList.remove("empty");
-    el.innerHTML = `<div class="timeline">${blocks.map(b => {
-      const startTxt = melTimeShort(b.start);
-      const endTxt   = b.end ? melTimeShort(b.end) : "now";
-      const durMs    = (b.end ? b.end.getTime() : Date.now()) - b.start.getTime();
-      const durTxt   = b.kind === "work" ? fmtHours(durMs / 3_600_000) : Math.round(durMs / 60_000) + "m";
-      const label    = b.kind === "work" ? "Worked" : "On break";
-      const cls      = b.kind === "work" ? "start" : "brk";
-      const ongoing  = b.ongoing ? ` <span class="meta">· in progress</span>` : "";
-      return `
-        <div class="timeline-row ${cls}">
-          <div class="ts">${startTxt} → ${endTxt}</div>
-          <div class="dot-col"><div class="dot"></div></div>
-          <div class="who-line">
-            <span class="actor">${escapeHtml(b.actor)}</span>
-            <span class="act">${label}</span>
-            <span class="meta">· ${durTxt}</span>${ongoing}
-          </div>
-        </div>
-      `;
+    el.innerHTML = `<div class="activity-grid">${userList.map((u, i) => {
+      const c = ACTIVITY_PALETTE[i % ACTIVITY_PALETTE.length];
+      const blocks = blocksByUid[u.uid].slice().sort((a, b) => b.start - a.start);
+      const initials = getInitials(u.name || u.email);
+      const headerHtml = `
+        <div class="activity-col-header">
+          <div class="avatar" style="background:${c}">${initials}</div>
+          <div class="name">${escapeHtml(u.name || u.email)}</div>
+        </div>`;
+      if (blocks.length === 0) {
+        return `<div class="activity-col">${headerHtml}<div class="empty-state">No activity today.</div></div>`;
+      }
+      return `<div class="activity-col">
+        ${headerHtml}
+        <div class="timeline">${blocks.map(b => {
+          const startTxt = melTimeShort(b.start);
+          const endTxt   = b.end ? melTimeShort(b.end) : "now";
+          const durMs    = (b.end ? b.end.getTime() : Date.now()) - b.start.getTime();
+          const durTxt   = b.kind === "work" ? fmtHours(durMs / 3_600_000) : Math.round(durMs / 60_000) + "m";
+          const label    = b.kind === "work" ? "Worked" : "On break";
+          const explanation = `${b.kind === "work" ? "worked" : "on break"} from ${startTxt} until ${endTxt}`;
+          const cls      = b.kind === "work" ? "start" : "brk";
+          const ongoing  = b.ongoing ? ` <span class="meta">· in progress</span>` : "";
+          return `
+            <div class="timeline-row ${cls}">
+              <div class="ts">${startTxt} → ${endTxt}</div>
+              <div class="dot-col"><div class="dot"></div></div>
+              <div class="who-line" style="flex-wrap:wrap">
+                <span class="act">${label}</span>
+                <span class="meta">· ${durTxt}</span>${ongoing}
+                <div class="meta" style="flex-basis:100%; margin-top:2px; font-size:11.5px">${explanation}</div>
+              </div>
+            </div>
+          `;
+        }).join("")}</div>
+      </div>`;
     }).join("")}</div>`;
   }
   loadTeamActivity();
