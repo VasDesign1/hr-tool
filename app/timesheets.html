@@ -259,7 +259,13 @@
     const barW = n > 90 ? 5 : n > 30 ? 10 : 16;
     const workedTotal = Object.values(dailyData).reduce((s, v) => s + v, 0);
     const breakTotal  = Object.values(breakData).reduce((s, v) => s + v, 0);
-    const { vividChartOptions, chartToPieData, vividPieOptions, makeChartToggle } = await import("../assets/chart-style.js");
+    let __cs = null;
+    try { __cs = await import("../assets/chart-style.js"); }
+    catch (e) { console.error("Failed to load chart-style.js:", e); }
+    const vividChartOptions = __cs?.vividChartOptions || (() => ({ responsive: true, maintainAspectRatio: false }));
+    const chartToPieData    = __cs?.chartToPieData    || ((d) => d);
+    const vividPieOptions   = __cs?.vividPieOptions   || (() => ({ responsive: true, maintainAspectRatio: false }));
+    const makeChartToggle   = __cs?.makeChartToggle   || (() => document.createElement("span"));
     const dailyBarData = {
       labels: ordered.map(k => n <= 14 ? fmtAUDow(k) : fmtAUShort(k)),
       datasets: [
@@ -426,9 +432,12 @@
     finally { btn.disabled = false; btn.textContent = "Submit"; }
   });
 
-  rangePick.addEventListener("change", loadRange);
-  loadRange();
-  loadFixRequests();
+  rangePick.addEventListener("change", () => loadRange().catch(e => console.error("loadRange:", e)));
+  loadRange().catch(e => {
+    console.error("loadRange initial:", e);
+    document.getElementById("daysList").innerHTML = `<div class="empty" style="color:var(--bad)">Could not load: ${e.message || e.code || e}</div>`;
+  });
+  loadFixRequests().catch(e => console.error("loadFixRequests:", e));
 </script>
 </body>
 </html>

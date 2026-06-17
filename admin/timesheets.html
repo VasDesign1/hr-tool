@@ -660,7 +660,18 @@
     return out;
   }
 
-  const { VIVID_PALETTE: PALETTE, vividChartOptions, chartToPieData, vividPieOptions, makeChartToggle } = await import("../assets/chart-style.js");
+  let __chartStyle = null;
+  try {
+    __chartStyle = await import("../assets/chart-style.js");
+  } catch (e) {
+    console.error("Failed to load chart-style.js:", e);
+    alert("Could not load chart styles. " + (e.message || e));
+  }
+  const PALETTE = __chartStyle?.VIVID_PALETTE || ["#3B82F6","#14B8A6","#EAB308","#EF4444","#8B5CF6","#0EA5E9"];
+  const vividChartOptions = __chartStyle?.vividChartOptions || (() => ({ responsive: true, maintainAspectRatio: false }));
+  const chartToPieData    = __chartStyle?.chartToPieData    || ((d) => d);
+  const vividPieOptions   = __chartStyle?.vividPieOptions   || (() => ({ responsive: true, maintainAspectRatio: false }));
+  const makeChartToggle   = __chartStyle?.makeChartToggle   || (() => document.createElement("span"));
   let periodChart = null;
   let periodType = "bar";
   let lastPeriodData = null;
@@ -728,8 +739,10 @@
     periodToggle.appendChild(makeChartToggle("bar", (t) => { periodType = t; renderPeriodChart(); }));
     periodToggle.dataset.wired = "1";
   }
-  document.getElementById("periodPick").addEventListener("change", loadPeriodSummary);
-  loadPeriodSummary();
+  document.getElementById("periodPick").addEventListener("change", () => {
+    loadPeriodSummary().catch(e => { console.error("Period summary failed:", e); });
+  });
+  loadPeriodSummary().catch(e => { console.error("Period summary failed:", e); });
 
   // ===================================================================
   // INITIAL LOAD
