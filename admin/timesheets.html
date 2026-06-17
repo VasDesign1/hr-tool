@@ -610,28 +610,39 @@
 
     const perUserDaily = await Promise.all(active.map(async (u) => {
       const teSnap = await getDocs(query(collection(db, "timeEntries"), where("uid", "==", u.uid)));
-      const map = Object.fromEntries(keys.map(k => [k, 0]));
-      let total = 0;
+      const workMap = Object.fromEntries(keys.map(k => [k, 0]));
+      const breakMap = Object.fromEntries(keys.map(k => [k, 0]));
+      let total = 0, breakTotal = 0;
       teSnap.forEach(d => {
         const e = d.data();
-        if (e.date >= start && e.date <= end && e.hoursWorked) {
-          map[e.date] = (map[e.date] || 0) + e.hoursWorked;
-          total += e.hoursWorked;
+        if (e.date >= start && e.date <= end) {
+          if (e.hoursWorked) { workMap[e.date] = (workMap[e.date] || 0) + e.hoursWorked; total += e.hoursWorked; }
+          if (e.breakMinutes) { breakMap[e.date] = (breakMap[e.date] || 0) + e.breakMinutes / 60; breakTotal += e.breakMinutes / 60; }
         }
       });
-      return { user: u, map, total };
+      return { user: u, workMap, breakMap, total, breakTotal };
     }));
 
     document.getElementById("periodMeta").textContent = `${fmtAU(start)} → ${fmtAU(end)}`;
 
-    const datasets = perUserDaily.map((row, i) => {
+    // Two datasets per user (Worked + Break) — same colour family but Worked solid, Break lighter
+    const datasets = [];
+    const thickness = kind === "quarter" ? 6 : kind === "month" ? 10 : kind === "week" ? 18 : 36;
+    perUserDaily.forEach((row, i) => {
       const c = PALETTE[i % PALETTE.length];
-      return {
-        label: `${(row.user.name || row.user.email).split(" ")[0]} · ${fmtHM(row.total)}`,
-        data: keys.map(k => Number((row.map[k] || 0).toFixed(2))),
-        backgroundColor: c + "99", borderColor: c, borderWidth: 1, borderRadius: 4,
-        maxBarThickness: kind === "quarter" ? 6 : kind === "month" ? 10 : kind === "week" ? 28 : 40
-      };
+      const name = (row.user.name || row.user.email).split(" ")[0];
+      datasets.push({
+        label: `${name} · Worked ${fmtHM(row.total)}`,
+        data: keys.map(k => Number((row.workMap[k] || 0).toFixed(2))),
+        backgroundColor: c + "CC", borderColor: c, borderWidth: 1, borderRadius: 4,
+        maxBarThickness: thickness, stack: `user-${i}`
+      });
+      datasets.push({
+        label: `${name} · Break ${fmtHM(row.breakTotal)}`,
+        data: keys.map(k => Number((row.breakMap[k] || 0).toFixed(2))),
+        backgroundColor: c + "44", borderColor: c + "88", borderWidth: 1, borderRadius: 4,
+        maxBarThickness: thickness, stack: `user-${i}`
+      });
     });
 
     if (periodChart) periodChart.destroy();

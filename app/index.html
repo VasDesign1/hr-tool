@@ -198,34 +198,69 @@
   }
 
   function renderActivityTimeline(sessions, breakSegments) {
-    const events = [];
+    // Build ranges: work blocks (worked between clock-in / break-start, break-end / clock-out)
+    // and explicit break blocks. Result is a chronological list of time-range "blocks".
+    const blocks = [];
     sessions.forEach(s => {
-      events.push({ t: s.start, kind: "start", label: "Clocked in" });
-      if (s.end) events.push({ t: s.end, kind: "end", label: "Clocked out", meta: s.hours != null ? `worked ${fmtHours(s.hours)}` : "" });
+      const sessionBreaks = breakSegments
+        .filter(b => b.start >= s.start && (s.end ? b.end <= s.end : true))
+        .sort((a, b) => a.start - b.start);
+      let cursor = s.start;
+      sessionBreaks.forEach(b => {
+        if (b.start > cursor) {
+          blocks.push({ kind: "work", start: cursor, end: b.start });
+        }
+        blocks.push({ kind: "brk", start: b.start, end: b.end });
+        cursor = b.end;
+      });
+      if (s.end) {
+        if (s.end > cursor) blocks.push({ kind: "work", start: cursor, end: s.end });
+      } else {
+        // open shift
+        blocks.push({ kind: "work", start: cursor, end: null, ongoing: true });
+      }
     });
-    breakSegments.forEach(b => {
-      events.push({ t: b.start, kind: "brk", label: "Took a break" });
-      events.push({ t: b.end,   kind: "resume", label: "Resumed work", meta: `break ${fmtMinutes(b.minutes)}` });
-    });
-    events.sort((a, b) => a.t - b.t);
+    // If currently on break, the last work-block ends at the break-start (already handled),
+    // and an ongoing break exists in breakSegments only after resumed — but for in-progress break,
+    // we still need to render it:
+    if (currentBreakStartMs && !breakSegments.some(b => Math.abs(b.start.getTime() - currentBreakStartMs) < 500 && b.end == null)) {
+      // Truncate last work block to currentBreakStart and add ongoing break
+      const breakNow = new Date(currentBreakStartMs);
+      if (blocks.length && blocks[blocks.length - 1].kind === "work" && blocks[blocks.length - 1].end == null) {
+        blocks[blocks.length - 1].end = breakNow;
+        blocks[blocks.length - 1].ongoing = false;
+      }
+      blocks.push({ kind: "brk", start: breakNow, end: null, ongoing: true });
+    }
+    blocks.sort((a, b) => a.start - b.start);
+
     const el = document.getElementById("activityTimeline");
     if (!el) return;
-    if (events.length === 0) {
+    if (blocks.length === 0) {
       el.classList.add("empty");
       el.innerHTML = "Nothing yet today — clock in to start your day.";
       return;
     }
     el.classList.remove("empty");
-    el.innerHTML = `<div class="timeline">${events.map(ev => `
-      <div class="timeline-row ${ev.kind}">
-        <div class="ts">${melTimeShort(ev.t)}</div>
-        <div class="dot-col"><div class="dot"></div></div>
-        <div class="who-line">
-          <span class="act">${ev.label}</span>
-          ${ev.meta ? `<span class="meta">· ${escapeHtml(ev.meta)}</span>` : ""}
+    el.innerHTML = `<div class="timeline">${blocks.map(b => {
+      const startTxt = melTimeShort(b.start);
+      const endTxt   = b.end ? melTimeShort(b.end) : "now";
+      const durMs    = (b.end ? b.end.getTime() : Date.now()) - b.start.getTime();
+      const durTxt   = b.kind === "work" ? fmtHours(durMs / 3_600_000) : fmtMinutes(durMs / 60_000);
+      const label    = b.kind === "work" ? "Worked" : "On break";
+      const cls      = b.kind === "work" ? "start" : "brk";
+      const ongoing  = b.ongoing ? ` <span class="meta">· in progress</span>` : "";
+      return `
+        <div class="timeline-row ${cls}">
+          <div class="ts">${startTxt} → ${endTxt}</div>
+          <div class="dot-col"><div class="dot"></div></div>
+          <div class="who-line">
+            <span class="act">${label}</span>
+            <span class="meta">· ${durTxt}</span>${ongoing}
+          </div>
         </div>
-      </div>
-    `).join("")}</div>`;
+      `;
+    }).join("")}</div>`;
   }
 
   async function refreshTodayMetrics() {
@@ -402,10 +437,11 @@
       getDocs(query(collection(db, "leaveRequests"), where("uid", "==", user.uid)))
     ]);
     const timeEntries = []; teSnap.forEach(d => timeEntries.push(d.data()));
-    const approved = []; const upcoming = []; let pending = 0;
+    const allRequests = []; const approved = []; const upcoming = []; let pending = 0;
     const todayKey = melDateKey();
     lrSnap.forEach(d => {
       const r = { id: d.id, ...d.data() };
+      allRequests.push(r);
       if (r.status === "approved") {
         approved.push(r);
         if (r.endDate >= todayKey) upcoming.push(r);
@@ -442,7 +478,7 @@
       });
     setTip("tipPending", pendingRows.length
       ? `<span class="head">Awaiting admin</span><ul>${pendingRows.join("")}</ul>`
-      : "");
+      : `<span class="head">Awaiting admin</span><span class="none">No pending requests.</span>`);
 
     const listEl = document.getElementById("upcomingLeave");
     if (upcoming.length === 0) {

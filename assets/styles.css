@@ -337,6 +337,28 @@ a:hover { text-decoration: underline; }
 .tile-tip li .right { color: #94A3B8; font-variant-numeric: tabular-nums; }
 .tile-tip .none { color: #94A3B8; font-style: italic; }
 
+/* Floating tooltip for calendar entries — follows the cursor */
+.float-tip {
+  position: fixed;
+  background: var(--text);
+  color: white;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  pointer-events: none;
+  z-index: 100;
+  box-shadow: var(--shadow-lg);
+  max-width: 300px;
+  display: none;
+  white-space: pre-line;
+}
+.float-tip.open { display: block; }
+.float-tip .head {
+  display: block; font-weight: 600; margin-bottom: 4px;
+  font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+}
+
 /* Activity timeline */
 .timeline { display: flex; flex-direction: column; gap: 0; position: relative; padding-left: 8px; }
 .timeline-row { display: grid; grid-template-columns: 70px 18px 1fr; gap: 12px; align-items: center; padding: 7px 0; position: relative; }

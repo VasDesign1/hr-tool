@@ -113,6 +113,33 @@ export function renderCalendar(container, opts) {
       el.addEventListener("click", () => onClickDay(el.dataset.date));
     });
   }
+
+  // ----- Hover floating tooltip on cal-entry -----
+  let tipEl = document.getElementById("calFloatTip");
+  if (!tipEl) {
+    tipEl = document.createElement("div");
+    tipEl.id = "calFloatTip";
+    tipEl.className = "float-tip";
+    document.body.appendChild(tipEl);
+  }
+  container.querySelectorAll(".cal-entry").forEach(el => {
+    const tooltip = el.getAttribute("title");
+    if (!tooltip) return;
+    // suppress native browser tooltip
+    el.removeAttribute("title");
+    el.dataset.tip = tooltip;
+    el.addEventListener("mouseenter", () => {
+      tipEl.textContent = el.dataset.tip;
+      tipEl.classList.add("open");
+    });
+    el.addEventListener("mousemove", (ev) => {
+      tipEl.style.left = (ev.clientX + 14) + "px";
+      tipEl.style.top  = (ev.clientY + 14) + "px";
+    });
+    el.addEventListener("mouseleave", () => {
+      tipEl.classList.remove("open");
+    });
+  });
 }
 
 function parseKey(key) {

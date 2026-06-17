@@ -290,20 +290,20 @@
             titleFont: { family: "Inter", weight: "600", size: 13 }, bodyFont: { family: "Inter", size: 12 },
             callbacks: {
               title: (items) => fmtAUDow(weekKeys[items[0].dataIndex]),
-              label: (ctx) => `${ctx.dataset.label.split(" · ")[0]}: ${fmtHM(ctx.parsed.y)}`
+              label: (ctx) => `${ctx.dataset.label.split(" · ")[0]}: ${fmtHours(ctx.parsed.y)}`
             }
           }
         },
         scales: {
           x: { grid: { display: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 12 } } },
-          y: { beginAtZero: true, grid: { color: "#E6E8EE", drawBorder: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 12 }, callback: (v) => fmtHM(v) }, title: { display: true, text: "Hours", color: "#64748B", font: { family: "Inter", size: 12 } } }
+          y: { beginAtZero: true, grid: { color: "#E6E8EE", drawBorder: false }, ticks: { color: "#64748B", font: { family: "Inter", size: 12 }, callback: (v) => fmtHours(v) }, title: { display: true, text: "Hours", color: "#64748B", font: { family: "Inter", size: 12 } } }
         }
       }
     });
   }
   loadWeekChart();
 
-  // ----- Today's team activity timeline -----
+  // ----- Today's team activity timeline (time RANGES per contractor) -----
   async function loadTeamActivity() {
     const todayKey = melDateKey();
     const usnap = await getDocs(query(collection(db, "users"), where("role", "==", "contractor")));
@@ -311,48 +311,74 @@
     usnap.forEach(d => usersByUid[d.id] = d.data());
 
     const teSnap = await getDocs(query(collection(db, "timeEntries"), where("date", "==", todayKey)));
-    const events = [];
+    const blocks = [];
+
     teSnap.forEach(d => {
       const e = d.data();
       const u = usersByUid[e.uid];
       const name = u?.name || u?.email || "?";
       const start = e.clockInUTC?.toDate?.();
       const end   = e.clockOutUTC?.toDate?.();
-      if (start) events.push({ t: start, kind: "start", actor: name, label: "Clocked in" });
-      if (end)   events.push({ t: end,   kind: "end",   actor: name, label: "Clocked out", meta: e.hoursWorked != null ? `worked ${fmtHours(e.hoursWorked)}` : "" });
-      (e.breaks || []).forEach(b => {
-        const s = b.startUTC?.toDate?.();
-        const en = b.endUTC?.toDate?.();
-        if (s)  events.push({ t: s,  kind: "brk",    actor: name, label: "Took a break" });
-        if (en) events.push({ t: en, kind: "resume", actor: name, label: "Resumed work", meta: `break ${b.minutes != null ? Math.round(b.minutes) + "m" : ""}` });
+      if (!start) return;
+
+      const sessionBreaks = (e.breaks || [])
+        .map(b => ({ start: b.startUTC?.toDate?.(), end: b.endUTC?.toDate?.(), minutes: b.minutes }))
+        .filter(b => b.start && b.end)
+        .sort((a, b) => a.start - b.start);
+
+      let cursor = start;
+      sessionBreaks.forEach(b => {
+        if (b.start > cursor) blocks.push({ kind: "work", actor: name, start: cursor, end: b.start });
+        blocks.push({ kind: "brk", actor: name, start: b.start, end: b.end });
+        cursor = b.end;
       });
-    });
-    // Pull in-progress break for any currently clocked-in user
-    Object.entries(usersByUid).forEach(([uid, u]) => {
-      if (u.currentBreakStartAt?.toDate) {
-        events.push({ t: u.currentBreakStartAt.toDate(), kind: "brk", actor: u.name || u.email, label: "Took a break" });
+      if (end) {
+        if (end > cursor) blocks.push({ kind: "work", actor: name, start: cursor, end });
+      } else {
+        // still clocked in — figure out if there's an in-progress break
+        if (u?.currentBreakStartAt?.toDate) {
+          const brkStart = u.currentBreakStartAt.toDate();
+          if (brkStart > cursor) blocks.push({ kind: "work", actor: name, start: cursor, end: brkStart });
+          blocks.push({ kind: "brk", actor: name, start: brkStart, end: null, ongoing: true });
+        } else {
+          blocks.push({ kind: "work", actor: name, start: cursor, end: null, ongoing: true });
+        }
       }
     });
-    events.sort((a, b) => b.t - a.t); // newest first
+
+    blocks.sort((a, b) => b.start - a.start); // newest first
 
     const el = document.getElementById("teamActivityTimeline");
-    if (events.length === 0) {
+    if (blocks.length === 0) {
       el.classList.add("empty");
       el.innerHTML = "No activity today yet.";
       return;
     }
     el.classList.remove("empty");
-    el.innerHTML = `<div class="timeline">${events.map(ev => `
-      <div class="timeline-row ${ev.kind}">
-        <div class="ts">${melTimeShort(ev.t)}</div>
-        <div class="dot-col"><div class="dot"></div></div>
-        <div class="who-line">
-          <span class="actor">${escapeHtml(ev.actor)}</span>
-          <span class="act">${ev.label}</span>
-          ${ev.meta ? `<span class="meta">· ${escapeHtml(ev.meta)}</span>` : ""}
+    el.innerHTML = `<div class="timeline">${blocks.map(b => {
+      const startTxt = melTimeShort(b.start);
+      const endTxt   = b.end ? melTimeShort(b.end) : "now";
+      const durMs    = (b.end ? b.end.getTime() : Date.now()) - b.start.getTime();
+      const durTxt   = b.kind === "work" ? fmtHours(durMs / 3_600_000) : Math.round(durMs / 60_000) + "m";
+      const label    = b.kind === "work" ? "Worked" : "On break";
+      const explanation = b.kind === "work"
+        ? `worked from ${startTxt} until ${endTxt}`
+        : `on break from ${startTxt} until ${endTxt}`;
+      const cls      = b.kind === "work" ? "start" : "brk";
+      const ongoing  = b.ongoing ? ` <span class="meta">· in progress</span>` : "";
+      return `
+        <div class="timeline-row ${cls}">
+          <div class="ts">${startTxt} → ${endTxt}</div>
+          <div class="dot-col"><div class="dot"></div></div>
+          <div class="who-line" style="flex-wrap:wrap">
+            <span class="actor">${escapeHtml(b.actor)}</span>
+            <span class="act">${label}</span>
+            <span class="meta">· ${durTxt}</span>${ongoing}
+            <div class="meta" style="flex-basis:100%; margin-top:2px; font-size:11.5px">${explanation}</div>
+          </div>
         </div>
-      </div>
-    `).join("")}</div>`;
+      `;
+    }).join("")}</div>`;
   }
   loadTeamActivity();
   setInterval(loadTeamActivity, 60_000);
@@ -460,7 +486,7 @@
       y: {
         beginAtZero: true,
         grid: { color: "#E6E8EE", drawBorder: false },
-        ticks: { color: "#64748B", font: { family: "Inter", size: 12 }, callback: (v) => fmtHM(v) },
+        ticks: { color: "#64748B", font: { family: "Inter", size: 12 }, callback: (v) => fmtHours(v) },
         title: { display: true, text: yLabel, color: "#64748B", font: { family: "Inter", size: 12 } }
       }
     }
