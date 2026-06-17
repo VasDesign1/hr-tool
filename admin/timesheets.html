@@ -531,15 +531,13 @@
       <thead><tr><th>Date</th><th>Sessions</th><th style="text-align:right">Hours</th><th></th></tr></thead>
       <tbody>${keys.map(k => {
         const d = byDay[k];
-        const sessionsHtml = d.entries.length
-          ? `<div class="session-chips">${d.entries.map(e => {
-              const start = e.clockInUTC.toDate();
-              const end = e.clockOutUTC ? e.clockOutUTC.toDate() : null;
-              if (!end) return `<span class="session-chip open" data-edit-id="${e.id}"><span>${melTimeShort(start)}</span><span class="arr">→</span><span class="to">still in</span></span>`;
-              const dur = hoursBetween(start.getTime(), end.getTime());
-              return `<span class="session-chip" data-edit-id="${e.id}"><span>${melTimeShort(start)}</span><span class="arr">→</span><span>${melTimeShort(end)}</span><span class="dur">${fmtHours(dur)}</span></span>`;
-            }).join("")}</div>`
-          : `<span class="no-sessions">no sessions</span>`;
+        let sessionsHtml = `<span class="no-sessions">no sessions</span>`;
+        if (d.entries.length) {
+          const segments = [];
+          d.entries.forEach(e => entrySegmentsAdmin(e).forEach(s => segments.push(s)));
+          segments.sort((a, b) => a.start - b.start);
+          sessionsHtml = `<div class="session-chips">${segments.map(s => chipHtmlAdmin(s)).join("")}</div>`;
+        }
         return `<tr>
           <td>${fmtDay(k)}</td>
           <td>${sessionsHtml}</td>
@@ -559,6 +557,55 @@
 
   userPick.addEventListener("change", loadHistory);
   rangePick.addEventListener("change", loadHistory);
+
+  // Same segment logic as contractor side, plus carry the entry id so chips stay clickable for edit.
+  function entrySegmentsAdmin(e) {
+    const out = [];
+    const start = e.clockInUTC?.toDate?.();
+    const end   = e.clockOutUTC?.toDate?.();
+    if (!start) return out;
+    const breaks = (e.breaks || [])
+      .map(b => ({ start: b.startUTC?.toDate?.(), end: b.endUTC?.toDate?.() }))
+      .filter(b => b.start && b.end)
+      .sort((a, b) => a.start - b.start);
+    let cursor = start;
+    breaks.forEach(b => {
+      if (b.start > cursor) out.push({ kind: "work", start: cursor, end: b.start, entryId: e.id });
+      out.push({ kind: "brk", start: b.start, end: b.end, entryId: e.id });
+      cursor = b.end;
+    });
+    if (end) {
+      if (end > cursor) out.push({ kind: "work", start: cursor, end, entryId: e.id });
+    } else {
+      out.push({ kind: "work", start: cursor, end: null, ongoing: true, entryId: e.id });
+    }
+    return out;
+  }
+  function chipHtmlAdmin(s) {
+    if (s.kind === "brk") {
+      const dur = (s.end - s.start) / 60_000;
+      return `<span class="session-chip brk" data-edit-id="${s.entryId}">
+        <span>${melTimeShort(s.start)}</span>
+        <span class="arr">→</span>
+        <span>${melTimeShort(s.end)}</span>
+        <span class="dur">${dur >= 1 ? Math.round(dur) + "m" : Math.max(1, Math.round(dur*60)) + "s"}</span>
+      </span>`;
+    }
+    if (s.ongoing) {
+      return `<span class="session-chip open" data-edit-id="${s.entryId}">
+        <span>${melTimeShort(s.start)}</span>
+        <span class="arr">→</span>
+        <span class="to">still in</span>
+      </span>`;
+    }
+    const dur = hoursBetween(s.start.getTime(), s.end.getTime());
+    return `<span class="session-chip" data-edit-id="${s.entryId}">
+      <span>${melTimeShort(s.start)}</span>
+      <span class="arr">→</span>
+      <span>${melTimeShort(s.end)}</span>
+      <span class="dur">${fmtHours(dur)}</span>
+    </span>`;
+  }
 
   // ===================================================================
   // PERIOD SUMMARY (daily / week / month / 90 days)

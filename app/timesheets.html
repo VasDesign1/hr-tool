@@ -297,14 +297,10 @@
             const cs = c.clockInUTC?.toMillis?.() || 0;
             return as - cs;
           });
-          const sessionsHtml = `<div class="session-chips">${dayEntries.map(e => {
-            const start = e.clockInUTC?.toDate?.();
-            const end   = e.clockOutUTC?.toDate?.();
-            if (!start) return "";
-            if (!end) return `<span class="session-chip open"><span>${melTimeShort(start)}</span><span class="arr">→</span><span class="to">still in</span></span>`;
-            const dur = hoursBetween(start.getTime(), end.getTime());
-            return `<span class="session-chip"><span>${melTimeShort(start)}</span><span class="arr">→</span><span>${melTimeShort(end)}</span><span class="dur">${fmtHours(dur)}</span></span>`;
-          }).join("")}</div>`;
+          const segments = [];
+          dayEntries.forEach(e => entrySegments(e).forEach(s => segments.push(s)));
+          segments.sort((a, b) => a.start - b.start);
+          const sessionsHtml = `<div class="session-chips">${segments.map(s => chipHtml(s)).join("")}</div>`;
           const breakMs = (dayBreaks[k] || 0);
           return `<tr>
             <td>${fmtAU(k)}<div class="muted" style="font-size:11px; margin-top:2px">${fmtDay(k)}</div></td>
@@ -315,6 +311,57 @@
         }).join("")}</tbody>
       </table>`;
     }
+  }
+
+  // Build chronological work/break segments from a single time entry.
+  // Each entry is split by its breaks into multiple work segments.
+  function entrySegments(e) {
+    const out = [];
+    const start = e.clockInUTC?.toDate?.();
+    const end   = e.clockOutUTC?.toDate?.();
+    if (!start) return out;
+    const breaks = (e.breaks || [])
+      .map(b => ({ start: b.startUTC?.toDate?.(), end: b.endUTC?.toDate?.() }))
+      .filter(b => b.start && b.end)
+      .sort((a, b) => a.start - b.start);
+    let cursor = start;
+    breaks.forEach(b => {
+      if (b.start > cursor) out.push({ kind: "work", start: cursor, end: b.start });
+      out.push({ kind: "brk", start: b.start, end: b.end });
+      cursor = b.end;
+    });
+    if (end) {
+      if (end > cursor) out.push({ kind: "work", start: cursor, end });
+    } else {
+      out.push({ kind: "work", start: cursor, end: null, ongoing: true });
+    }
+    return out;
+  }
+
+  function chipHtml(s) {
+    if (s.kind === "brk") {
+      const dur = (s.end - s.start) / 60_000;
+      return `<span class="session-chip brk">
+        <span>${melTimeShort(s.start)}</span>
+        <span class="arr">→</span>
+        <span>${melTimeShort(s.end)}</span>
+        <span class="dur">${fmtMinutes(dur)}</span>
+      </span>`;
+    }
+    if (s.ongoing) {
+      return `<span class="session-chip open">
+        <span>${melTimeShort(s.start)}</span>
+        <span class="arr">→</span>
+        <span class="to">still in</span>
+      </span>`;
+    }
+    const dur = hoursBetween(s.start.getTime(), s.end.getTime());
+    return `<span class="session-chip">
+      <span>${melTimeShort(s.start)}</span>
+      <span class="arr">→</span>
+      <span>${melTimeShort(s.end)}</span>
+      <span class="dur">${fmtHours(dur)}</span>
+    </span>`;
   }
 
   async function loadFixRequests() {

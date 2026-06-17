@@ -693,29 +693,47 @@ table.data td .actions button { padding: 6px 11px; font-size: 12px; }
 .session-chip {
   display: inline-flex; align-items: center; gap: 8px;
   padding: 5px 10px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
+  background: rgba(20,184,166,.10);
+  border: 1px solid rgba(20,184,166,.35);
+  color: #0F766E;
   border-radius: 8px;
   font-size: 12px;
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
-  transition: background .12s, border-color .12s;
+  transition: background .12s, border-color .12s, box-shadow .12s;
 }
-.session-chip:hover { background: var(--surface-3); border-color: var(--border-2); }
-.session-chip .arr { color: var(--muted); }
+.session-chip:hover { background: rgba(20,184,166,.18); border-color: rgba(20,184,166,.55); }
+.session-chip .arr { color: #14B8A680; }
 .session-chip .dur {
-  color: var(--muted);
+  color: #0F766E99;
   padding-left: 8px;
   margin-left: 2px;
-  border-left: 1px solid var(--border-2);
+  border-left: 1px solid rgba(20,184,166,.3);
   font-size: 11px;
+  font-weight: 600;
 }
+
+.session-chip.brk {
+  background: rgba(139,92,246,.10);
+  border-color: rgba(139,92,246,.35);
+  color: #6D28D9;
+}
+.session-chip.brk:hover { background: rgba(139,92,246,.18); border-color: rgba(139,92,246,.55); }
+.session-chip.brk .arr { color: #8B5CF680; }
+.session-chip.brk .dur {
+  color: #6D28D999;
+  border-left-color: rgba(139,92,246,.3);
+}
+
 .session-chip.open {
-  border-color: rgba(16,185,129,.5);
-  background: rgba(16,185,129,.07);
+  background: rgba(16,185,129,.10);
+  border-color: rgba(16,185,129,.55);
+  box-shadow: 0 0 0 1px rgba(16,185,129,.25) inset;
 }
+.session-chip.open:hover { background: rgba(16,185,129,.18); }
 .session-chip.open .to { color: #047857; font-weight: 700; }
+.session-chip.open .arr { color: #10B98180; }
 
 .no-sessions { color: var(--muted); font-size: 12px; font-style: italic; }
 
