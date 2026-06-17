@@ -91,7 +91,13 @@
 
   <!-- Hours chart -->
   <div class="card">
-    <div class="toolbar"><h2>Hours per day</h2><span class="muted" style="font-size:12px" id="chartMeta">—</span></div>
+    <div class="toolbar">
+      <h2>Hours per day</h2>
+      <div class="row">
+        <span class="muted" style="font-size:12px" id="chartMeta">—</span>
+        <span id="dailyChartToggle"></span>
+      </div>
+    </div>
     <div style="position:relative; height:260px"><canvas id="dailyChart"></canvas></div>
   </div>
 
@@ -250,30 +256,30 @@
       if (e.hoursWorked && dailyData[e.date] !== undefined) dailyData[e.date] += e.hoursWorked;
       if (e.breakMinutes && breakData[e.date] !== undefined) breakData[e.date] += e.breakMinutes / 60;
     });
-    if (chartRef) chartRef.destroy();
     const barW = n > 90 ? 5 : n > 30 ? 10 : 16;
     const workedTotal = Object.values(dailyData).reduce((s, v) => s + v, 0);
     const breakTotal  = Object.values(breakData).reduce((s, v) => s + v, 0);
-    const { vividChartOptions } = await import("../assets/chart-style.js");
-    chartRef = new Chart(document.getElementById("dailyChart"), {
-      type: "bar",
-      data: {
-        labels: ordered.map(k => n <= 14 ? fmtAUDow(k) : fmtAUShort(k)),
-        datasets: [
-          {
-            label: `Worked · ${fmtHM(workedTotal)}`,
-            data: ordered.map(k => Number(dailyData[k].toFixed(2))),
-            backgroundColor: "#14B8A6", borderColor: "#14B8A6", borderWidth: 0, borderRadius: 2, maxBarThickness: barW
-          },
-          {
-            label: `Break · ${fmtHM(breakTotal)}`,
-            data: ordered.map(k => Number(breakData[k].toFixed(2))),
-            backgroundColor: "#8B5CF6", borderColor: "#8B5CF6", borderWidth: 0, borderRadius: 2, maxBarThickness: barW
-          }
-        ]
-      },
-      options: vividChartOptions({ yLabel: "Hours", titleLookup: (idx) => fmtAUDow(ordered[idx]) })
-    });
+    const { vividChartOptions, chartToPieData, vividPieOptions, makeChartToggle } = await import("../assets/chart-style.js");
+    const dailyBarData = {
+      labels: ordered.map(k => n <= 14 ? fmtAUDow(k) : fmtAUShort(k)),
+      datasets: [
+        { label: `Worked · ${fmtHM(workedTotal)}`, data: ordered.map(k => Number(dailyData[k].toFixed(2))), backgroundColor: "#14B8A6", borderColor: "#14B8A6", borderWidth: 0, borderRadius: 2, maxBarThickness: barW },
+        { label: `Break · ${fmtHM(breakTotal)}`,   data: ordered.map(k => Number(breakData[k].toFixed(2))),   backgroundColor: "#8B5CF6", borderColor: "#8B5CF6", borderWidth: 0, borderRadius: 2, maxBarThickness: barW }
+      ]
+    };
+    const dailyBarOpts = vividChartOptions({ yLabel: "Hours", titleLookup: (idx) => fmtAUDow(ordered[idx]) });
+    function renderDaily(type) {
+      if (chartRef) chartRef.destroy();
+      chartRef = new Chart(document.getElementById("dailyChart"), type === "pie"
+        ? { type: "pie", data: chartToPieData(dailyBarData), options: vividPieOptions() }
+        : { type: "bar", data: dailyBarData, options: dailyBarOpts });
+    }
+    const dailyToggle = document.getElementById("dailyChartToggle");
+    if (dailyToggle && !dailyToggle.dataset.wired) {
+      dailyToggle.appendChild(makeChartToggle("bar", renderDaily));
+      dailyToggle.dataset.wired = "1";
+    }
+    renderDaily(dailyToggle?.querySelector("button.active")?.dataset.t || "bar");
     document.getElementById("chartMeta").textContent = `${fmtAU(oldestKey)} → ${fmtAU(keys[0])}`;
 
     // Day-by-day table — only days with entries, newest first, with sessions

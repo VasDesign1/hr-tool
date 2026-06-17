@@ -72,25 +72,33 @@
 
   <!-- Hours per day -->
   <div class="card">
-    <div class="toolbar"><h2>Daily hours worked</h2><span class="muted" style="font-size:12px" id="dailyMeta">—</span></div>
+    <div class="toolbar"><h2>Daily hours worked</h2>
+      <div class="row"><span class="muted" style="font-size:12px" id="dailyMeta">—</span><span id="dailyToggle"></span></div>
+    </div>
     <div style="position:relative; height:280px"><canvas id="dailyChart"></canvas></div>
   </div>
 
   <!-- Clock-in time distribution -->
   <div class="card">
-    <div class="toolbar"><h2>Clock-in time pattern</h2><span class="muted" style="font-size:12px">When this contractor typically starts (Melbourne)</span></div>
+    <div class="toolbar"><h2>Clock-in time pattern</h2>
+      <div class="row"><span class="muted" style="font-size:12px">When this contractor typically starts (Melbourne)</span><span id="clockInToggle"></span></div>
+    </div>
     <div style="position:relative; height:240px"><canvas id="clockInChart"></canvas></div>
   </div>
 
   <!-- Day-of-week pattern -->
   <div class="card">
-    <div class="toolbar"><h2>Day-of-week pattern</h2><span class="muted" style="font-size:12px">Average hours by weekday</span></div>
+    <div class="toolbar"><h2>Day-of-week pattern</h2>
+      <div class="row"><span class="muted" style="font-size:12px">Average hours by weekday</span><span id="dowToggle"></span></div>
+    </div>
     <div style="position:relative; height:240px"><canvas id="dowChart"></canvas></div>
   </div>
 
   <!-- Team comparison -->
   <div class="card">
-    <div class="toolbar"><h2>Team comparison · range</h2><span class="muted" style="font-size:12px">All contractors over selected range</span></div>
+    <div class="toolbar"><h2>Team comparison · range</h2>
+      <div class="row"><span class="muted" style="font-size:12px">All contractors over selected range</span><span id="teamToggle"></span></div>
+    </div>
     <div style="position:relative; height:280px"><canvas id="teamChart"></canvas></div>
   </div>
 </main>
@@ -118,7 +126,33 @@
   // default to "All contractors" so admin sees comparison upfront
 
   // Vibrant per-contractor palette
-  const { VIVID_PALETTE: PALETTE, vividChartOptions } = await import("../assets/chart-style.js");
+  const { VIVID_PALETTE: PALETTE, vividChartOptions, chartToPieData, vividPieOptions, makeChartToggle } = await import("../assets/chart-style.js");
+
+  // Track current chart types so re-renders preserve user's choice
+  const chartTypes = { daily: "bar", clockIn: "bar", dow: "bar", team: "bar" };
+  const lastData   = { daily: null,  clockIn: null,  dow: null,  team: null  };
+  const lastOpts   = { daily: null,  clockIn: null,  dow: null,  team: null  };
+  const isCountKey = { daily: false, clockIn: true,  dow: false, team: false };
+
+  function newChartOf(key, canvasId) {
+    destroy(key);
+    if (!lastData[key]) return;
+    const t = chartTypes[key];
+    charts[key] = new Chart(document.getElementById(canvasId), t === "pie"
+      ? { type: "pie", data: chartToPieData(lastData[key]), options: vividPieOptions({ isCount: isCountKey[key] }) }
+      : { type: "bar", data: lastData[key], options: lastOpts[key] });
+  }
+  function wireToggle(key, canvasId, hostId) {
+    const host = document.getElementById(hostId);
+    if (host && !host.dataset.wired) {
+      host.appendChild(makeChartToggle("bar", (t) => { chartTypes[key] = t; newChartOf(key, canvasId); }));
+      host.dataset.wired = "1";
+    }
+  }
+  wireToggle("daily",   "dailyChart",   "dailyToggle");
+  wireToggle("clockIn", "clockInChart", "clockInToggle");
+  wireToggle("dow",     "dowChart",     "dowToggle");
+  wireToggle("team",    "teamChart",    "teamToggle");
   function contractorColor(uid) {
     const idx = users.filter(u => u.active !== false).findIndex(u => u.uid === uid);
     return PALETTE[idx % PALETTE.length] || PALETTE[0];
@@ -265,12 +299,9 @@
         const h = Number(start.toLocaleTimeString("en-AU", { timeZone: MEL_TZ, hour12: false, hour: "2-digit" }));
         if (h >= 5 && h <= 20) buckets[h - 5]++;
       });
-      destroy("clockIn");
-      charts.clockIn = new Chart(document.getElementById("clockInChart"), {
-        type: "bar",
-        data: { labels: hourLabels, datasets: [{ label: "Clock-ins", data: buckets, backgroundColor: "#3B82F6", borderColor: "#3B82F6", borderWidth: 0, borderRadius: 2, maxBarThickness: 26 }] },
-        options: vividChartOptions({ yLabel: "Sessions", isCount: true })
-      });
+      lastData.clockIn = { labels: hourLabels, datasets: [{ label: "Clock-ins", data: buckets, backgroundColor: "#3B82F6", borderColor: "#3B82F6", borderWidth: 0, borderRadius: 2, maxBarThickness: 26 }] };
+      lastOpts.clockIn = vividChartOptions({ yLabel: "Sessions", isCount: true });
+      newChartOf("clockIn", "clockInChart");
 
       const dowSum = new Array(7).fill(0), dowDays = new Array(7).fill(0), seen = new Map();
       inRange.forEach(e => {
@@ -281,12 +312,9 @@
         if (!seen.has(e.date)) { seen.set(e.date, dow); dowDays[dow]++; }
       });
       const dowAvg = dowSum.map((s, i) => dowDays[i] > 0 ? s / dowDays[i] : 0);
-      destroy("dow");
-      charts.dow = new Chart(document.getElementById("dowChart"), {
-        type: "bar",
-        data: { labels: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], datasets: [{ label: "Avg hours", data: dowAvg.map(v => Number(v.toFixed(2))), backgroundColor: "#0EA5E9", borderColor: "#0EA5E9", borderWidth: 0, borderRadius: 2, maxBarThickness: 56 }] },
-        options: vividChartOptions({ yLabel: "Avg hours / day" })
-      });
+      lastData.dow = { labels: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], datasets: [{ label: "Avg hours", data: dowAvg.map(v => Number(v.toFixed(2))), backgroundColor: "#0EA5E9", borderColor: "#0EA5E9", borderWidth: 0, borderRadius: 2, maxBarThickness: 56 }] };
+      lastOpts.dow = vividChartOptions({ yLabel: "Avg hours / day" });
+      newChartOf("dow", "dowChart");
 
     } else {
       // ─── All contractors: grouped per-contractor across each axis ──────
@@ -352,12 +380,9 @@
         const c = contractorColor(u.uid);
         return { label: firstName(u), data: buckets, backgroundColor: c, borderColor: c, borderWidth: 0, borderRadius: 2, maxBarThickness: 20 };
       });
-      destroy("clockIn");
-      charts.clockIn = new Chart(document.getElementById("clockInChart"), {
-        type: "bar",
-        data: { labels: hourLabels, datasets: clockInDatasets },
-        options: vividChartOptions({ yLabel: "Sessions", isCount: true })
-      });
+      lastData.clockIn = { labels: hourLabels, datasets: clockInDatasets };
+      lastOpts.clockIn = vividChartOptions({ yLabel: "Sessions", isCount: true });
+      newChartOf("clockIn", "clockInChart");
 
       // Day-of-week chart — grouped per contractor (avg hours / day)
       const dowDatasets = activeUsers.map((u, i) => {
@@ -373,12 +398,9 @@
         const c = contractorColor(u.uid);
         return { label: firstName(u), data: avg, backgroundColor: c, borderColor: c, borderWidth: 0, borderRadius: 2, maxBarThickness: 28 };
       });
-      destroy("dow");
-      charts.dow = new Chart(document.getElementById("dowChart"), {
-        type: "bar",
-        data: { labels: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], datasets: dowDatasets },
-        options: vividChartOptions({ yLabel: "Avg hours / day" })
-      });
+      lastData.dow = { labels: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], datasets: dowDatasets };
+      lastOpts.dow = vividChartOptions({ yLabel: "Avg hours / day" });
+      newChartOf("dow", "dowChart");
     }
 
     document.getElementById("dailyMeta").textContent = `${fmtAU(oldestKey)} → ${fmtAU(todayKey)}`;
@@ -409,28 +431,15 @@
     const active = users.filter(u => u.active !== false);
     const teamWorked = Object.values(hoursByUid).reduce((s, v) => s + v, 0);
     const teamBreak  = Object.values(breakHByUid).reduce((s, v) => s + v, 0);
-    destroy("team");
-    charts.team = new Chart(document.getElementById("teamChart"), {
-      type: "bar",
-      data: {
-        labels: active.map(u => (u.name || u.email).split(" ")[0]),
-        datasets: [
-          {
-            label: `Worked · ${fmtHM(teamWorked)}`,
-            data: active.map(u => Number((hoursByUid[u.uid] || 0).toFixed(2))),
-            backgroundColor: "#14B8A6",
-            borderColor: "#14B8A6", borderWidth: 0, borderRadius: 2, maxBarThickness: 34
-          },
-          {
-            label: `Break · ${fmtHM(teamBreak)}`,
-            data: active.map(u => Number((breakHByUid[u.uid] || 0).toFixed(2))),
-            backgroundColor: "#8B5CF6",
-            borderColor: "#8B5CF6", borderWidth: 0, borderRadius: 2, maxBarThickness: 34
-          }
-        ]
-      },
-      options: vividChartOptions({ yLabel: "Hours" })
-    });
+    lastData.team = {
+      labels: active.map(u => (u.name || u.email).split(" ")[0]),
+      datasets: [
+        { label: `Worked · ${fmtHM(teamWorked)}`, data: active.map(u => Number((hoursByUid[u.uid] || 0).toFixed(2))), backgroundColor: "#14B8A6", borderColor: "#14B8A6", borderWidth: 0, borderRadius: 2, maxBarThickness: 34 },
+        { label: `Break · ${fmtHM(teamBreak)}`,   data: active.map(u => Number((breakHByUid[u.uid] || 0).toFixed(2))),  backgroundColor: "#8B5CF6", borderColor: "#8B5CF6", borderWidth: 0, borderRadius: 2, maxBarThickness: 34 }
+      ]
+    };
+    lastOpts.team = vividChartOptions({ yLabel: "Hours" });
+    newChartOf("team", "teamChart");
   }
 
   userPick.addEventListener("change", () => { loadUserAnalytics(); });

@@ -43,6 +43,7 @@
     <div class="toolbar">
       <h2>Period summary</h2>
       <div class="row">
+        <span id="periodChartToggle"></span>
         <select id="periodPick" style="min-width:140px">
           <option value="day">Daily</option>
           <option value="week" selected>This week</option>
@@ -659,8 +660,11 @@
     return out;
   }
 
-  const { VIVID_PALETTE: PALETTE, vividChartOptions } = await import("../assets/chart-style.js");
+  const { VIVID_PALETTE: PALETTE, vividChartOptions, chartToPieData, vividPieOptions, makeChartToggle } = await import("../assets/chart-style.js");
   let periodChart = null;
+  let periodType = "bar";
+  let lastPeriodData = null;
+  let lastPeriodOpts = null;
   async function loadPeriodSummary() {
     const kind = document.getElementById("periodPick").value;
     const { start, end } = periodRange(kind);
@@ -706,12 +710,23 @@
       });
     });
 
+    lastPeriodData = { labels, datasets };
+    lastPeriodOpts = vividChartOptions({ yLabel: "Hours", titleLookup: (idx) => fmtAUDow(keys[idx]) });
+    renderPeriodChart();
+  }
+
+  function renderPeriodChart() {
+    if (!lastPeriodData) return;
     if (periodChart) periodChart.destroy();
-    periodChart = new Chart(document.getElementById("periodChart"), {
-      type: "bar",
-      data: { labels, datasets },
-      options: vividChartOptions({ yLabel: "Hours", titleLookup: (idx) => fmtAUDow(keys[idx]) })
-    });
+    periodChart = new Chart(document.getElementById("periodChart"), periodType === "pie"
+      ? { type: "pie", data: chartToPieData(lastPeriodData), options: vividPieOptions() }
+      : { type: "bar", data: lastPeriodData, options: lastPeriodOpts });
+  }
+
+  const periodToggle = document.getElementById("periodChartToggle");
+  if (periodToggle && !periodToggle.dataset.wired) {
+    periodToggle.appendChild(makeChartToggle("bar", (t) => { periodType = t; renderPeriodChart(); }));
+    periodToggle.dataset.wired = "1";
   }
   document.getElementById("periodPick").addEventListener("change", loadPeriodSummary);
   loadPeriodSummary();

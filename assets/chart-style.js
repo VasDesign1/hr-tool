@@ -28,6 +28,86 @@ export function colorFor(uid, idx) {
 // Lighter shade for "break" variant of the same hue (#RRGGBB + alpha)
 export function lighter(color) { return color + "55"; }
 
+// Convert a bar chart's data shape into pie chart data.
+// Multi-dataset → sum each dataset, slice per dataset using its color.
+// Single dataset → one slice per label, rainbow from the palette.
+export function chartToPieData(barData, palette) {
+  palette = palette || VIVID_PALETTE;
+  if (barData.datasets.length > 1) {
+    return {
+      labels: barData.datasets.map(ds => {
+        const parts = ds.label.split(" · ");
+        return parts.length >= 2 ? `${parts[0]} (${parts[1].split(" ")[0]})` : ds.label;
+      }),
+      datasets: [{
+        data: barData.datasets.map(ds => ds.data.reduce((s, v) => s + (v || 0), 0)),
+        backgroundColor: barData.datasets.map(ds => ds.backgroundColor),
+        borderColor: "#fff",
+        borderWidth: 2
+      }]
+    };
+  }
+  return {
+    labels: barData.labels,
+    datasets: [{
+      data: barData.datasets[0].data,
+      backgroundColor: barData.labels.map((_, i) => palette[i % palette.length]),
+      borderColor: "#fff",
+      borderWidth: 2
+    }]
+  };
+}
+
+// Pie chart options matching the vibrant style — right-side legend, percentage tooltips.
+export function vividPieOptions({ isCount = false } = {}) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        position: "right",
+        labels: {
+          boxWidth: 12, boxHeight: 12, padding: 10,
+          color: "#334155",
+          font: { family: "Inter", size: 12, weight: "500" }
+        }
+      },
+      tooltip: {
+        backgroundColor: "#0B1220", padding: 12, cornerRadius: 8,
+        titleFont: { family: "Inter", weight: "600", size: 13 },
+        bodyFont: { family: "Inter", size: 12 },
+        callbacks: {
+          label: (ctx) => {
+            const v = ctx.parsed;
+            const total = ctx.dataset.data.reduce((s, x) => s + (x || 0), 0);
+            const pct = total > 0 ? ((v / total) * 100).toFixed(1) : "0";
+            return `${ctx.label}: ${isCount ? v : fmtHours(v)} (${pct}%)`;
+          }
+        }
+      }
+    }
+  };
+}
+
+// Tiny pill toggle UI for switching a chart between bar/pie.
+// Returns the toolbar element you can insert anywhere in the page.
+export function makeChartToggle(initialType = "bar", onChange) {
+  const wrap = document.createElement("div");
+  wrap.className = "chart-toolbar";
+  wrap.innerHTML = `
+    <button data-t="bar" class="${initialType === "bar" ? "active" : ""}">Bar</button>
+    <button data-t="pie" class="${initialType === "pie" ? "active" : ""}">Pie</button>
+  `;
+  wrap.querySelectorAll("button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      wrap.querySelectorAll("button").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      onChange(btn.dataset.t);
+    });
+  });
+  return wrap;
+}
+
 // Solid Chart.js dataset style for a Worked / Break pair.
 export function workedBreakDatasets({ contractorName, color, workedData, breakData, workedTotal, breakTotal, thickness = 22 }) {
   return [
@@ -68,12 +148,15 @@ export function vividChartOptions({ yLabel = "Hours", titleLookup, isCount = fal
           usePointStyle: false,
           color: "#334155",
           font: { family: "Inter", size: 12, weight: "500" },
-          // Strip "· total Xh Ym" from legend labels for tidiness
+          // Tidy: "Luis · Worked 7h 6m" → "Luis (Worked)"; single-series → keep name
           generateLabels: (chart) => {
             const items = Chart.defaults.plugins.legend.labels.generateLabels(chart);
             items.forEach(it => {
-              const idx = it.text.indexOf(" · ");
-              if (idx > -1) it.text = it.text.slice(0, idx);
+              const parts = it.text.split(" · ");
+              if (parts.length >= 2) {
+                const series = parts[1].split(" ")[0];
+                it.text = `${parts[0]} (${series})`;
+              }
             });
             return items;
           }

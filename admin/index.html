@@ -89,7 +89,10 @@
   <div class="card">
     <div class="toolbar">
       <h2>Hours this week</h2>
-      <span class="muted" style="font-size:12px">per contractor</span>
+      <div class="row">
+        <span class="muted" style="font-size:12px">per contractor</span>
+        <span id="weekChartToggle"></span>
+      </div>
     </div>
     <div style="position:relative; height:280px">
       <canvas id="weekChart"></canvas>
@@ -244,7 +247,7 @@
       }
     }
 
-    const { VIVID_PALETTE: PALETTE, vividChartOptions } = await import("../assets/chart-style.js");
+    const { VIVID_PALETTE: PALETTE, vividChartOptions, chartToPieData, vividPieOptions, makeChartToggle } = await import("../assets/chart-style.js");
     const perUserDaily = await Promise.all(contractors.map(async (c) => {
       const teSnap = await getDocs(query(collection(db, "timeEntries"), where("uid", "==", c.uid)));
       const map = Object.fromEntries(weekKeys.map(k => [k, 0]));
