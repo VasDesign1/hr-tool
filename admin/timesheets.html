@@ -251,6 +251,14 @@
     dayList.classList.remove("empty");
     dayList.innerHTML = `<div class="empty">Loading…</div>`;
 
+    // For today, re-fetch users so we see live currentBreakStartAt
+    let liveUsersByUid = usersByUid;
+    if (isToday) {
+      const fresh = await getDocs(query(collection(db, "users"), where("role", "==", "contractor")));
+      liveUsersByUid = {};
+      fresh.forEach(d => liveUsersByUid[d.id] = { uid: d.id, ...d.data() });
+    }
+
     const snap = await getDocs(query(collection(db, "timeEntries"), where("date", "==", dateKey)));
     const byUid = {};
     snap.forEach(d => {
@@ -267,8 +275,14 @@
     const now = Date.now();
     const rows = users.filter(u => u.active !== false).map(u => {
       const b = byUid[u.uid];
+      const liveUser = liveUsersByUid[u.uid] || u;
+      const isOnBreakNow = isToday && b && b.openStart && liveUser.currentBreakStartAt?.toDate;
       let statusHtml, hoursHtml;
-      if (b && b.openStart) {
+      if (b && b.openStart && isOnBreakNow) {
+        const brkStart = liveUser.currentBreakStartAt.toDate();
+        statusHtml = `<span class="status-pill break"><span class="dot"></span>On break since ${melTimeShort(brkStart)} <span style="opacity:.7; margin-left:6px">· clocked in ${melTimeShort(b.openStart)}</span></span>`;
+        hoursHtml = `<span style="color:#7C3AED; font-weight:700">${fmtHours(b.hours)}</span>`;
+      } else if (b && b.openStart) {
         const live = isToday ? hoursBetween(b.openStart.getTime(), now) : 0;
         statusHtml = `<span class="status-pill working"><span class="dot"></span>Working since ${melTimeShort(b.openStart)}</span>`;
         hoursHtml = `<span style="color:#4ade80; font-weight:700">${fmtHours(b.hours + live)}</span>`;

@@ -53,6 +53,15 @@
     </div>
     <div id="balancesList" class="empty">Loading…</div>
   </div>
+
+  <!-- Full leave history (all decisions logged) -->
+  <div class="card">
+    <div class="toolbar">
+      <h2>All leave requests</h2>
+      <span class="muted" style="font-size:12px">Submitted / approved / denied dates</span>
+    </div>
+    <div id="historyList" class="empty">Loading…</div>
+  </div>
 </main>
 
 <!-- Decision modal -->
@@ -185,6 +194,7 @@
       loadUpcoming();
       loadBalances();
       loadCalendar();
+      loadHistory();
     } catch (ex) {
       document.getElementById("decisionErr").textContent = "Failed: " + (ex.message || ex.code);
     } finally {
@@ -317,10 +327,62 @@
     });
   }
 
+  async function loadHistory() {
+    const listEl = document.getElementById("historyList");
+    const snap = await getDocs(collection(db, "leaveRequests"));
+    const reqs = [];
+    snap.forEach(d => reqs.push({ id: d.id, ...d.data() }));
+    if (reqs.length === 0) {
+      listEl.classList.add("empty");
+      listEl.innerHTML = "No leave requests in the system yet.";
+      return;
+    }
+    reqs.sort((a, b) => (b.submittedAt?.toMillis?.() || 0) - (a.submittedAt?.toMillis?.() || 0));
+    listEl.classList.remove("empty");
+    listEl.innerHTML = `<table class="data">
+      <thead><tr>
+        <th>Contractor</th>
+        <th>Dates</th>
+        <th>Hours</th>
+        <th>Status</th>
+        <th>Submitted</th>
+        <th>Decided</th>
+        <th>Reason / note</th>
+      </tr></thead>
+      <tbody>${reqs.map(r => {
+        const u = usersByUid[r.uid];
+        const range = r.startDate === r.endDate ? fmtDay(r.startDate) : `${fmtDay(r.startDate)} → ${fmtDay(r.endDate)}`;
+        const submitted = r.submittedAt?.toDate?.()?.toLocaleString("en-AU", { timeZone: "Australia/Melbourne", hour12: false }) || "—";
+        const decided = r.decidedAt?.toDate?.()?.toLocaleString("en-AU", { timeZone: "Australia/Melbourne", hour12: false });
+        const decidedTxt = decided
+          ? `<div>${decided}</div>${r.decidedBy ? `<div class="muted" style="font-size:11px">by ${escapeHtml(r.decidedBy)}</div>` : ""}`
+          : `<span class="muted">—</span>`;
+        const badge = r.status === "approved"  ? `<span class="badge ok">Approved</span>`
+                    : r.status === "denied"    ? `<span class="badge bad">Denied</span>`
+                    : r.status === "cancelled" ? `<span class="badge off">Cancelled</span>`
+                    : `<span class="badge pending">Pending</span>`;
+        const reasonHtml = r.reason
+          ? `<div class="muted" style="font-size:13px">${escapeHtml(r.reason)}</div>`
+          : `<span class="muted">—</span>`;
+        const noteHtml = r.adminNote ? `<div class="muted" style="font-size:11px; margin-top:4px"><em>Admin: ${escapeHtml(r.adminNote)}</em></div>` : "";
+        return `<tr>
+          <td>${escapeHtml(u?.name || r.requesterName || "—")}</td>
+          <td>${range}</td>
+          <td>${fmtLeave(r.hours)}</td>
+          <td>${badge}</td>
+          <td class="muted" style="font-size:12px">${submitted}</td>
+          <td class="muted" style="font-size:12px">${decidedTxt}</td>
+          <td>${reasonHtml}${noteHtml}</td>
+        </tr>`;
+      }).join("")}</tbody>
+    </table>`;
+  }
+
   loadCalendar();
   startPendingLive();
   loadUpcoming();
   loadBalances();
+  loadHistory();
 </script>
 </body>
 </html>

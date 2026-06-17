@@ -24,15 +24,28 @@ export function localClock(date = new Date()) {
   return date.toLocaleTimeString([], { hour12: false });
 }
 
-// Pretty hours: 7.6 -> "7h 36m"
+// Pretty hours: 7.6 -> "7h 36m"; 0.633 -> "38m"; 0.005 -> "18s"; 0 -> "0m"
 export function fmtHours(hours) {
   if (hours == null || isNaN(hours)) return "—";
-  const totalMins = Math.round(hours * 60);
+  const sign = hours < 0 ? "-" : "";
+  const absH = Math.abs(hours);
+  if (absH > 0 && absH < 1 / 60) {
+    const secs = Math.max(1, Math.round(absH * 3600));
+    return `${sign}${secs}s`;
+  }
+  const totalMins = Math.round(absH * 60);
   const h = Math.floor(totalMins / 60);
   const m = totalMins % 60;
-  if (h === 0) return `${m}m`;
-  if (m === 0) return `${h}h`;
-  return `${h}h ${m}m`;
+  if (h === 0 && m === 0) return "0m";
+  if (h === 0) return `${sign}${m}m`;
+  if (m === 0) return `${sign}${h}h`;
+  return `${sign}${h}h ${m}m`;
+}
+
+// Pretty minutes: 38.5 -> "38m"; 0.5 -> "30s"; 95 -> "1h 35m"
+export function fmtMins(mins) {
+  if (mins == null || isNaN(mins)) return "—";
+  return fmtHours(mins / 60);
 }
 
 // Decimal hours between two Date or millis timestamps.
