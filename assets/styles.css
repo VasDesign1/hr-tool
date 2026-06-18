@@ -789,11 +789,6 @@ table.data td .actions button { padding: 6px 11px; font-size: 12px; }
   border-left: 5px solid #8B5CF6;                 /* thick violet left bar */
   color: #5B21B6;
 }
-.session-chip.brk::before {
-  content: "☕";
-  font-size: 11px;
-  margin-right: -2px;
-}
 .session-chip.brk .arr { color: #8B5CF6; }
 .session-chip.brk .dur {
   color: #6D28D9;
