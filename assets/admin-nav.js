@@ -1,5 +1,7 @@
 // Admin shell: sidebar nav + footer user. Pages mount it after requireRole resolves.
 import { logout } from "./auth-router.js";
+import { db } from "./firebase-init.js";
+import { collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 const ICONS = {
   dashboard:  `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>`,
@@ -73,11 +75,54 @@ export function renderAdminNav(profile, currentPage) {
   const topbar = document.querySelector("header.topbar");
   if (topbar) topbar.style.display = "none";
 
-  // Attach logout
+  // Attach logout + fetch badge counts asynchronously
   setTimeout(() => {
     const btn = document.getElementById("logoutBtn");
     if (btn) btn.addEventListener("click", logout);
+    refreshAdminNavBadges().catch((e) => console.error("nav badges:", e));
   }, 0);
+}
+
+// Pending counts on the sidebar: leave queue + time-fix queue + first-login users.
+export async function refreshAdminNavBadges() {
+  // Build a quick set of test-account uids so we don't count test data toward badges
+  const usnap = await getDocs(query(collection(db, "users"), where("role", "==", "contractor")));
+  const testUids = new Set();
+  const awaitingLogin = [];
+  usnap.forEach(d => {
+    const u = d.data();
+    if (u.testAccount) testUids.add(d.id);
+    else if (u.mustChangePassword && u.active !== false) awaitingLogin.push(d.id);
+  });
+
+  const [leaveSnap, editSnap] = await Promise.all([
+    getDocs(query(collection(db, "leaveRequests"), where("status", "==", "pending"))),
+    getDocs(query(collection(db, "timeEditRequests"), where("status", "==", "pending")))
+  ]);
+
+  let pendingLeave = 0;
+  leaveSnap.forEach(d => { if (!testUids.has(d.data().uid)) pendingLeave++; });
+  let pendingEdits = 0;
+  editSnap.forEach(d => { if (!testUids.has(d.data().uid)) pendingEdits++; });
+
+  setBadge("leave",      pendingLeave, true);
+  setBadge("timesheets", pendingEdits, true);
+  setBadge("users",      awaitingLogin.length, false);
+}
+
+function setBadge(pageId, count, pulse) {
+  document.querySelectorAll(`.sidebar nav.side-nav a`).forEach(a => {
+    if (!a.querySelector("span")) return;
+    if (!a.href.includes(pageId === "leave" ? "leave.html" : pageId === "timesheets" ? "timesheets.html" : pageId === "users" ? "users.html" : pageId + ".html")) return;
+    let badge = a.querySelector(".nav-badge");
+    if (count <= 0) { if (badge) badge.remove(); return; }
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.className = "nav-badge" + (pulse ? " pulse" : " muted");
+      a.appendChild(badge);
+    }
+    badge.textContent = count;
+  });
 }
 
 export function getInitials(name) {

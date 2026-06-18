@@ -19,8 +19,8 @@
     </div>
     <nav class="simple-nav">
       <a href="index.html">Dashboard</a>
-      <a href="timesheets.html">Timesheets</a>
-      <a href="leave.html">Leave</a>
+      <a href="timesheets.html" data-page="timesheets">Timesheets</a>
+      <a href="leave.html" data-page="leave">Leave</a>
       <a class="active" href="profile.html">Profile</a>
     </nav>
     <div class="header-user">
@@ -78,6 +78,7 @@
   import { auth, db } from "../assets/firebase-init.js";
   import { requireRole, logout } from "../assets/auth-router.js";
   import { getInitials } from "../assets/admin-nav.js";
+  import { refreshContractorBadges } from "../assets/contractor-nav.js";
   import {
     EmailAuthProvider, reauthenticateWithCredential, updatePassword
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
@@ -90,6 +91,7 @@
   document.getElementById("profileName").textContent  = profile.name || "—";
   document.getElementById("profileEmail").textContent = profile.email || "—";
   document.getElementById("profileStart").textContent = profile.startDate || "—";
+  refreshContractorBadges(user.uid).catch(e => console.error("badges:", e));
 
   const errEl = document.getElementById("pwErr");
   const saveBtn = document.getElementById("saveBtn");

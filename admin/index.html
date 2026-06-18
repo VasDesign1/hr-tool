@@ -175,6 +175,13 @@
             ? `<span class="status-pill break"><span class="dot"></span>On break</span>`
             : `<span class="status-pill working"><span class="dot"></span>Working</span>`;
           const stampMs = onBreak ? a.breakStart.getTime() : a.start.getTime();
+          const shiftTotalMs = Date.now() - a.start.getTime();
+          const tipHtml = `
+            <strong>${escapeHtml(a.name)}</strong>
+            <div style="margin-top:4px">Clocked in at ${melTimeShort(a.start)}</div>
+            ${onBreak ? `<div>On break since ${melTimeShort(a.breakStart)}</div>` : ""}
+            <div class="muted" style="margin-top:4px">Total shift time: ${fmtHours(shiftTotalMs / 3_600_000)}</div>
+          `;
           return `
           <div class="live-row" data-stamp="${stampMs}" data-mode="${onBreak ? "break" : "work"}">
             <div class="who">
@@ -188,6 +195,7 @@
               ${pill}
               <div class="elapsed" data-elapsed>—</div>
             </div>
+            <div class="row-tip">${tipHtml}</div>
           </div>`;
         }).join("")}</div>`;
         tickElapsed();

@@ -642,6 +642,29 @@ table.data td .actions button { padding: 6px 11px; font-size: 12px; }
 .badge.pending  { background: var(--amber-soft);  color: #92400E; }
 .badge.off      { background: var(--surface-3);   color: var(--muted); }
 .badge.bad      { background: var(--bad-soft);    color: #991B1B; }
+.badge.test     { background: #EEF2FF; color: #4338CA; border: 1px solid #C7D2FE; margin-left: 6px; font-size: 10px; padding: 1px 6px; }
+
+/* Notification badges on nav tabs */
+.nav-badge {
+  display: inline-block;
+  background: #EF4444;
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 999px;
+  min-width: 16px;
+  text-align: center;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.nav-badge.muted { background: #94A3B8; }
+.nav-badge.pulse { animation: nav-pulse 2s infinite; }
+@keyframes nav-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,.5); }
+  60% { box-shadow: 0 0 0 6px rgba(239,68,68,0); }
+}
 
 .status-pill {
   display: inline-flex;

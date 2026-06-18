@@ -20,8 +20,8 @@
     </div>
     <nav class="simple-nav">
       <a href="index.html">Dashboard</a>
-      <a class="active" href="timesheets.html">Timesheets</a>
-      <a href="leave.html">Leave</a>
+      <a class="active" href="timesheets.html" data-page="timesheets">Timesheets</a>
+      <a href="leave.html" data-page="leave">Leave</a>
       <a href="profile.html">Profile</a>
     </nav>
     <div class="header-user">
@@ -137,6 +137,7 @@
   import { auth, db } from "../assets/firebase-init.js";
   import { requireRole, logout } from "../assets/auth-router.js";
   import { getInitials, escapeHtml } from "../assets/admin-nav.js";
+  import { refreshContractorBadges } from "../assets/contractor-nav.js";
   import { fmtHours, fmtDay, lastNDateKeys, melDateKey, melTimeShort, hoursBetween, fmtAUShort, fmtAUDow, fmtAU } from "../assets/time.js";
   import {
     collection, query, where, getDocs, addDoc, serverTimestamp
@@ -438,6 +439,7 @@
     document.getElementById("daysList").innerHTML = `<div class="empty" style="color:var(--bad)">Could not load: ${e.message || e.code || e}</div>`;
   });
   loadFixRequests().catch(e => console.error("loadFixRequests:", e));
+  refreshContractorBadges(user.uid).catch(e => console.error("badges:", e));
 </script>
 </body>
 </html>

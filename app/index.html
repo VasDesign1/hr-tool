@@ -19,8 +19,8 @@
     </div>
     <nav class="simple-nav">
       <a class="active" href="index.html">Dashboard</a>
-      <a href="timesheets.html">Timesheets</a>
-      <a href="leave.html">Leave</a>
+      <a href="timesheets.html" data-page="timesheets">Timesheets</a>
+      <a href="leave.html" data-page="leave">Leave</a>
       <a href="profile.html">Profile</a>
     </nav>
     <div class="header-user">
@@ -127,6 +127,7 @@
   import { auth, db } from "../assets/firebase-init.js";
   import { requireRole, logout } from "../assets/auth-router.js";
   import { getInitials, escapeHtml } from "../assets/admin-nav.js";
+  import { refreshContractorBadges } from "../assets/contractor-nav.js";
   import { melClock, localClock, melDateKey, melTimeShort, fmtHours, fmtDay, fmtDateShort, parseMelTime, MEL_TZ } from "../assets/time.js";
   import { computeBalance, fmtLeave } from "../assets/leave.js";
   import {
@@ -656,6 +657,7 @@
 
     try { await refreshTodayMetrics(); } catch (e) { console.error("refreshTodayMetrics:", e); }
     try { await refreshLeavePreview(); } catch (e) { console.error("refreshLeavePreview:", e); }
+    try { await refreshContractorBadges(user.uid); } catch (e) { console.error("badges:", e); }
     renderShiftState();
     renderBanners({ autoClosed, stillInWarn: maybeWarnStillIn() });
     tickClocks();
