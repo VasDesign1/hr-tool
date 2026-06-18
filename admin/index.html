@@ -317,7 +317,12 @@
       const u = { uid: d.id, ...d.data() };
       if (!u.testAccount) userList.push(u);  // exclude test accounts
     });
-    userList.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    // Real contractors first (alpha), test accounts last so Test always sits at the end of the row.
+    userList.sort((a, b) => {
+      const t = (a.testAccount ? 1 : 0) - (b.testAccount ? 1 : 0);
+      if (t !== 0) return t;
+      return (a.name || "").localeCompare(b.name || "");
+    });
 
     const teSnap = await getDocs(query(collection(db, "timeEntries"), where("date", "==", todayKey)));
     const blocksByUid = Object.fromEntries(userList.map(u => [u.uid, []]));

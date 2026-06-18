@@ -298,8 +298,9 @@ a:hover { text-decoration: underline; }
   padding: 12px 14px;
   border-radius: 10px;
   font-size: 12px;
-  min-width: 220px;
-  max-width: 340px;
+  min-width: 260px;
+  max-width: 420px;
+  width: max-content;
   opacity: 0;
   pointer-events: none;
   transition: opacity .15s, transform .15s;
