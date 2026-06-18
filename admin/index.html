@@ -260,15 +260,31 @@
     }
 
     const { VIVID_PALETTE: PALETTE, vividChartOptions, chartToPieData, vividPieOptions, makeChartToggle } = await import("../assets/chart-style.js");
+    const nowMs = Date.now();
     const perUserDaily = await Promise.all(contractors.map(async (c) => {
       const teSnap = await getDocs(query(collection(db, "timeEntries"), where("uid", "==", c.uid)));
       const map = Object.fromEntries(weekKeys.map(k => [k, 0]));
       let total = 0;
       teSnap.forEach(d => {
         const e = d.data();
-        if (e.date >= monKey && e.date <= todayKey && e.hoursWorked) {
+        if (e.date < monKey || e.date > todayKey) return;
+        // Closed shift uses stored hoursWorked
+        if (e.clockOutUTC && e.hoursWorked) {
           map[e.date] = (map[e.date] || 0) + e.hoursWorked;
           total += e.hoursWorked;
+          return;
+        }
+        // Open shift on today — compute live worked hours (now − clockIn − breaks)
+        if (!e.clockOutUTC && e.date === todayKey && e.clockInUTC?.toDate) {
+          const startMs = e.clockInUTC.toDate().getTime();
+          const closedBreakMs = (e.breakMinutes || 0) * 60_000;
+          let openBreakMs = 0;
+          if (c.currentEntryId === d.id && c.currentBreakStartAt?.toDate) {
+            openBreakMs = nowMs - c.currentBreakStartAt.toDate().getTime();
+          }
+          const liveH = Math.max(0, (nowMs - startMs - closedBreakMs - openBreakMs) / 3_600_000);
+          map[e.date] = (map[e.date] || 0) + liveH;
+          total += liveH;
         }
       });
       return { user: c, map, total };
