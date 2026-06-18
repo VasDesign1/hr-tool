@@ -53,7 +53,11 @@ export function renderAdminNav(profile, currentPage) {
     sb.innerHTML = `
       <div class="brand">
         <div class="logo">V</div>
-        <div class="name">Vic Air<small>HR Portal</small></div>
+        <div class="name">
+          Vic Air
+          <small>HR Portal</small>
+          <div class="brand-badges">${roleBadgesHtml(profile)}</div>
+        </div>
       </div>
       <nav class="side-nav">
         <div class="label">Workspace</div>
@@ -123,6 +127,19 @@ function setBadge(pageId, count, pulse) {
     }
     badge.textContent = count;
   });
+}
+
+// Tiny role + test pills shown right below the "HR Portal" line in the brand block.
+export function roleBadgesHtml(profile) {
+  const r = profile?.role;
+  const label = r === "admin" ? "ADMIN"
+              : r === "viewer" ? "VIEWER"
+              : r === "contractor" ? "CONTRACTOR"
+              : "";
+  const parts = [];
+  if (label) parts.push(`<span class="role-badge ${r}">${label}</span>`);
+  if (profile?.testAccount) parts.push(`<span class="role-badge test">TEST</span>`);
+  return parts.join("");
 }
 
 export function getInitials(name) {

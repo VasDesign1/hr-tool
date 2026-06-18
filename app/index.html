@@ -15,7 +15,11 @@
   <header class="simple-header">
     <div class="brand-row">
       <div class="logo">V</div>
-      <div class="name">Vic Air<small>HR Portal</small></div>
+      <div class="name">
+        Vic Air
+        <small>HR Portal</small>
+        <div class="brand-badges" id="brandBadges"></div>
+      </div>
     </div>
     <nav class="simple-nav">
       <a class="active" href="index.html">Dashboard</a>
@@ -126,7 +130,7 @@
 <script type="module">
   import { auth, db } from "../assets/firebase-init.js";
   import { requireRole, logout } from "../assets/auth-router.js";
-  import { getInitials, escapeHtml } from "../assets/admin-nav.js";
+  import { getInitials, escapeHtml, roleBadgesHtml } from "../assets/admin-nav.js";
   import { refreshContractorBadges } from "../assets/contractor-nav.js";
   import { melClock, localClock, melDateKey, melTimeShort, fmtHours, fmtDay, fmtDateShort, parseMelTime, MEL_TZ } from "../assets/time.js";
   import { computeBalance, fmtLeave } from "../assets/leave.js";
@@ -139,6 +143,8 @@
   document.getElementById("who").textContent = profile.name || profile.email || "";
   document.getElementById("avatar").textContent = getInitials(profile.name || profile.email);
   document.getElementById("logoutBtn").addEventListener("click", logout);
+  const __bb = document.getElementById("brandBadges");
+  if (__bb) __bb.innerHTML = roleBadgesHtml(profile);
 
   // Greeting
   const hr = new Date().toLocaleString("en-AU", { timeZone: "Australia/Melbourne", hour: "2-digit", hour12: false });

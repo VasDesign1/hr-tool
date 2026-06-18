@@ -16,7 +16,11 @@
   <header class="simple-header">
     <div class="brand-row">
       <div class="logo">V</div>
-      <div class="name">Vic Air<small>HR Portal</small></div>
+      <div class="name">
+        Vic Air
+        <small>HR Portal</small>
+        <div class="brand-badges" id="brandBadges"></div>
+      </div>
     </div>
     <nav class="simple-nav">
       <a href="index.html">Dashboard</a>
@@ -136,7 +140,7 @@
 <script type="module">
   import { auth, db } from "../assets/firebase-init.js";
   import { requireRole, logout } from "../assets/auth-router.js";
-  import { getInitials, escapeHtml } from "../assets/admin-nav.js";
+  import { getInitials, escapeHtml, roleBadgesHtml } from "../assets/admin-nav.js";
   import { refreshContractorBadges } from "../assets/contractor-nav.js";
   import { fmtHours, fmtDay, lastNDateKeys, melDateKey, melTimeShort, hoursBetween, fmtAUShort, fmtAUDow, fmtAU } from "../assets/time.js";
   import {
@@ -147,6 +151,8 @@
   document.getElementById("who").textContent = profile.name || profile.email || "";
   document.getElementById("avatar").textContent = getInitials(profile.name || profile.email);
   document.getElementById("logoutBtn").addEventListener("click", logout);
+  const __bb = document.getElementById("brandBadges");
+  if (__bb) __bb.innerHTML = roleBadgesHtml(profile);
 
   const rangePick = document.getElementById("rangePick");
 

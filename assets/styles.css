@@ -689,10 +689,26 @@ body.viewer-mode .footer-user .role {
   color: #4338CA;
   font-weight: 600;
 }
-body.viewer-mode .sidebar .brand .name small::after {
-  content: " · viewer";
-  color: #4338CA;
+/* Role + test badges sitting just under the "HR Portal" line in the brand block */
+.brand-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
 }
+.role-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid;
+  line-height: 1.2;
+}
+.role-badge.admin      { background: #ECFDF5; color: #047857; border-color: #6EE7B7; }
+.role-badge.viewer     { background: #FEF2F2; color: #991B1B; border-color: #FCA5A5; }
+.role-badge.contractor { background: #EFF6FF; color: #1E40AF; border-color: #93C5FD; }
+.role-badge.test       { background: #EEF2FF; color: #4338CA; border-color: #C7D2FE; }
 /* Fixed "READ ONLY" badge in the viewport corner — never overlaps page content */
 body.viewer-mode::after {
   content: "READ ONLY";
