@@ -108,7 +108,8 @@
   import { fmtLeave } from "../assets/leave.js";
   import { collection, query, where, getDocs, getDoc, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
-  const { profile } = await requireRole("admin");
+  const { profile } = await requireRole(["admin", "viewer"]);
+  if (profile.role === "viewer") document.body.classList.add("viewer-mode");
   renderAdminNav(profile, "dashboard");
 
   document.getElementById("todaySub").textContent =

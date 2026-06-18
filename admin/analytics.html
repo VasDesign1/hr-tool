@@ -116,7 +116,8 @@
   import { fmtHours, melDateKey, lastNDateKeys, fmtDay, MEL_TZ, fmtAU, fmtAUShort, fmtAUDow } from "../assets/time.js";
   import { collection, query, where, getDocs, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
-  const { profile } = await requireRole("admin");
+  const { profile } = await requireRole(["admin", "viewer"]);
+  if (profile.role === "viewer") document.body.classList.add("viewer-mode");
   renderAdminNav(profile, "analytics");
 
   const userPick  = document.getElementById("userPick");

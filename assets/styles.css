@@ -666,6 +666,27 @@ table.data td .actions button { padding: 6px 11px; font-size: 12px; }
 .badge.off      { background: var(--surface-3);   color: var(--muted); }
 .badge.bad      { background: var(--bad-soft);    color: #991B1B; }
 
+/* Viewer (read-only) mode — hide every write affordance across admin pages */
+body.viewer-mode .write-action,
+body.viewer-mode .actions,
+body.viewer-mode #addBtn,
+body.viewer-mode .toolbar > button:not(.ghost):not([data-allow-viewer]),
+body.viewer-mode .toolbar .row > button:not(.ghost):not([data-allow-viewer]) {
+  display: none !important;
+}
+body.viewer-mode .session-chip,
+body.viewer-mode .cal-entry {
+  cursor: default;
+}
+body.viewer-mode .footer-user .role {
+  color: #4338CA;
+  font-weight: 600;
+}
+body.viewer-mode .sidebar .brand .name small::after {
+  content: " · viewer";
+  color: #4338CA;
+}
+
 /* "Live" indicator dot — sits beside card titles when their data is wired via onSnapshot */
 .live-dot {
   display: inline-block;

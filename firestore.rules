@@ -14,6 +14,15 @@ service cloud.firestore {
         && get(/databases/$(db)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
 
+    function isViewer() {
+      return signedIn()
+        && exists(/databases/$(db)/documents/users/$(request.auth.uid))
+        && get(/databases/$(db)/documents/users/$(request.auth.uid)).data.role == 'viewer';
+    }
+
+    // "Staff" = admin OR viewer. Used on READ rules (viewer is read-only, never on writes).
+    function isStaff() { return isAdmin() || isViewer(); }
+
     function isSelf(uid) {
       return signedIn() && request.auth.uid == uid;
     }
@@ -24,7 +33,7 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      allow read:   if isSelf(uid) || isAdmin();
+      allow read:   if isSelf(uid) || isStaff();
       allow create: if isAdmin();
       allow update: if isAdmin()
                     || (isSelf(uid)
@@ -33,11 +42,9 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // Time entries — user writes own, admin can edit anything.
-    // For list queries: per-doc evaluation of read rule means contractor must always
-    // filter by their own uid; admin passes via isAdmin() branch regardless of filter.
+    // Time entries — user writes own, admin can edit anything, viewer can only read.
     match /timeEntries/{id} {
-      allow read:   if signedIn() && (isAdmin() || resource.data.uid == request.auth.uid);
+      allow read:   if signedIn() && (isStaff() || resource.data.uid == request.auth.uid);
       allow create: if signedIn()
                     && (isAdmin()
                         || (request.resource.data.uid == request.auth.uid
@@ -51,7 +58,7 @@ service cloud.firestore {
 
     // Time edit requests — contractor describes a problem; admin resolves manually.
     match /timeEditRequests/{id} {
-      allow read:   if signedIn() && (isAdmin() || resource.data.uid == request.auth.uid);
+      allow read:   if signedIn() && (isStaff() || resource.data.uid == request.auth.uid);
       allow create: if signedIn()
                     && request.resource.data.uid == request.auth.uid
                     && request.resource.data.status == 'pending';
@@ -62,9 +69,9 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // Leave requests — user submits own; admin approves/denies.
+    // Leave requests — user submits own; admin approves/denies; viewer read-only.
     match /leaveRequests/{id} {
-      allow read:   if signedIn() && (isAdmin() || resource.data.uid == request.auth.uid);
+      allow read:   if signedIn() && (isStaff() || resource.data.uid == request.auth.uid);
       allow create: if signedIn()
                     && request.resource.data.uid == request.auth.uid
                     && request.resource.data.status == 'pending';
@@ -75,9 +82,9 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // Leave ledger — admin-managed; user reads own.
+    // Leave ledger — admin-managed; user reads own; viewer read-only.
     match /leaveLedger/{uid}/entries/{id} {
-      allow read: if isSelf(uid) || isAdmin();
+      allow read: if isSelf(uid) || isStaff();
       allow write: if isAdmin();
     }
 

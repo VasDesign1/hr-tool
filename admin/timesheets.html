@@ -145,7 +145,9 @@
     collection, query, where, getDocs, orderBy, doc, addDoc, updateDoc, deleteDoc, serverTimestamp, Timestamp, onSnapshot
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
-  const { profile } = await requireRole("admin");
+  const { profile } = await requireRole(["admin", "viewer"]);
+  const canWrite = profile.role === "admin";
+  if (!canWrite) document.body.classList.add("viewer-mode");
   renderAdminNav(profile, "timesheets");
 
   const dayPick   = document.getElementById("dayPick");
@@ -357,12 +359,14 @@
         document.querySelector("#userPick").scrollIntoView({ behavior: "smooth", block: "start" });
       });
     });
-    dayList.querySelectorAll(".session-chip[data-edit-id]").forEach(el => {
-      el.addEventListener("click", () => openEditEntry(el.dataset.editId));
-    });
-    dayList.querySelectorAll("button[data-add]").forEach(btn => {
-      btn.addEventListener("click", () => openAddEntry(btn.dataset.add, dateKey));
-    });
+    if (canWrite) {
+      dayList.querySelectorAll(".session-chip[data-edit-id]").forEach(el => {
+        el.addEventListener("click", () => openEditEntry(el.dataset.editId));
+      });
+      dayList.querySelectorAll("button[data-add]").forEach(btn => {
+        btn.addEventListener("click", () => openAddEntry(btn.dataset.add, dateKey));
+      });
+    }
   }
   setInterval(() => { if (dayPick.value === melDateKey()) loadDay(); }, 60_000);
 
@@ -588,12 +592,14 @@
       }).join("")}</tbody>
     </table>`;
 
-    historyList.querySelectorAll(".session-chip[data-edit-id]").forEach(el => {
-      el.addEventListener("click", () => openEditEntry(el.dataset.editId));
-    });
-    historyList.querySelectorAll("button[data-add-history-uid]").forEach(btn => {
-      btn.addEventListener("click", () => openAddEntry(btn.dataset.addHistoryUid, btn.dataset.addHistoryDate));
-    });
+    if (canWrite) {
+      historyList.querySelectorAll(".session-chip[data-edit-id]").forEach(el => {
+        el.addEventListener("click", () => openEditEntry(el.dataset.editId));
+      });
+      historyList.querySelectorAll("button[data-add-history-uid]").forEach(btn => {
+        btn.addEventListener("click", () => openAddEntry(btn.dataset.addHistoryUid, btn.dataset.addHistoryDate));
+      });
+    }
   }
 
   userPick.addEventListener("change", loadHistory);

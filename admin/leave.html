@@ -91,7 +91,9 @@
     collection, query, where, getDocs, doc, updateDoc, serverTimestamp, orderBy, onSnapshot
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
-  const { profile } = await requireRole("admin");
+  const { profile } = await requireRole(["admin", "viewer"]);
+  const canWrite = profile.role === "admin";
+  if (!canWrite) document.body.classList.add("viewer-mode");
   renderAdminNav(profile, "leave");
 
   // ---- Load contractors once ----
@@ -326,6 +328,7 @@
       entries: allEntries,
       onClickEntry: (entry) => {
         if (entry.isHoliday) return;
+        if (!canWrite) { alert(entry.tooltip); return; }
         if (entry.full.status === "pending") {
           openDecision("approve", entry.id, entry.full);
         } else {

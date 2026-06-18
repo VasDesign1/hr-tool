@@ -34,6 +34,12 @@
       <input type="text" id="newName" required autocomplete="off">
       <label>Email</label>
       <input type="email" id="newEmail" required autocomplete="off">
+      <label>Role</label>
+      <select id="newRole" required>
+        <option value="contractor" selected>Contractor (clocks in / requests leave)</option>
+        <option value="viewer">Viewer (read-only admin panel)</option>
+        <option value="admin">Admin (full access)</option>
+      </select>
       <div class="error" id="addErr"></div>
       <div class="actions">
         <button type="button" class="ghost" id="cancelBtn">Cancel</button>
@@ -70,6 +76,12 @@
       <input type="text" id="editName" required>
       <label>Email <span class="muted" style="font-size:11px">(read-only)</span></label>
       <input type="email" id="editEmail" readonly disabled>
+      <label>Role</label>
+      <select id="editRole">
+        <option value="contractor">Contractor (clocks in / requests leave)</option>
+        <option value="viewer">Viewer (read-only admin panel)</option>
+        <option value="admin">Admin (full access)</option>
+      </select>
       <label style="display:flex; align-items:center; gap:8px; margin-top:14px; font-size:14px; color:var(--text); font-weight:500">
         <input type="checkbox" id="editTestAccount" style="width:auto">
         Test account
@@ -96,7 +108,9 @@
     collection, query, where, getDocs, doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
-  const { profile } = await requireRole("admin");
+  const { profile } = await requireRole(["admin", "viewer"]);
+  const canWrite = profile.role === "admin";
+  if (!canWrite) document.body.classList.add("viewer-mode");
   renderAdminNav(profile, "users");
 
   // ---- Helpers ----
@@ -113,15 +127,29 @@
   async function loadUsers() {
     const listEl = document.getElementById("listContainer");
     listEl.innerHTML = `<div class="empty">Loading…</div>`;
-    const snap = await getDocs(query(collection(db, "users"), where("role", "==", "contractor")));
-    if (snap.empty) {
-      listEl.innerHTML = `<div class="empty">No contractors yet. Click <strong>+ Add user</strong> to add one.</div>`;
-      return;
-    }
-    const rows = [];
+    // Show everyone but the admin themselves
+    const snap = await getDocs(collection(db, "users"));
+    const allRows = [];
     snap.forEach(d => {
       const u = d.data();
+      if (u.role === "admin") return; // hide admin from this list
+      allRows.push({ uid: d.id, ...u });
+    });
+    if (allRows.length === 0) {
+      listEl.innerHTML = `<div class="empty">No users yet. Click <strong>+ Add user</strong> to add one.</div>`;
+      return;
+    }
+    // Contractors first (alpha), then viewers
+    allRows.sort((a, b) => {
+      const r = (a.role === "viewer" ? 1 : 0) - (b.role === "viewer" ? 1 : 0);
+      if (r !== 0) return r;
+      return (a.name || "").localeCompare(b.name || "");
+    });
+    const rows = [];
+    allRows.forEach(u => {
+      const d = { id: u.uid };
       const testBadge = u.testAccount ? ` <span class="badge test">TEST</span>` : "";
+      const viewerBadge = u.role === "viewer" ? ` <span class="badge test" style="background:#FFF1F2; color:#9F1239; border-color:#FECDD3">VIEWER</span>` : "";
       const status = !u.active
         ? `<span class="badge off">Deactivated</span>`
         : u.mustChangePassword
@@ -129,7 +157,7 @@
           : `<span class="badge ok">Active</span>`;
       rows.push(`
         <tr>
-          <td>${escapeHtml(u.name || "—")}${testBadge}</td>
+          <td>${escapeHtml(u.name || "—")}${testBadge}${viewerBadge}</td>
           <td>${escapeHtml(u.email)}</td>
           <td>${status}</td>
           <td>
@@ -163,6 +191,7 @@
       document.getElementById("editUid").value = data.uid;
       document.getElementById("editName").value = u.name || "";
       document.getElementById("editEmail").value = u.email;
+      document.getElementById("editRole").value = u.role || "contractor";
       document.getElementById("editTestAccount").checked = !!u.testAccount;
       document.getElementById("editErr").textContent = "";
       document.getElementById("editModal").classList.add("open");
@@ -222,10 +251,11 @@
       await signOut(tempAuth);
 
       // Now write the profile doc using admin's main auth
+      const role = document.getElementById("newRole").value || "contractor";
       await setDoc(doc(db, "users", newUid), {
         email,
         name,
-        role: "contractor",
+        role,
         active: true,
         mustChangePassword: true,
         startDate: new Date().toISOString().slice(0, 10),
@@ -262,9 +292,10 @@
     e.preventDefault();
     const uid = document.getElementById("editUid").value;
     const name = document.getElementById("editName").value.trim();
+    const role = document.getElementById("editRole").value || "contractor";
     const testAccount = document.getElementById("editTestAccount").checked;
     try {
-      await updateDoc(doc(db, "users", uid), { name, testAccount });
+      await updateDoc(doc(db, "users", uid), { name, role, testAccount });
       document.getElementById("editModal").classList.remove("open");
       loadUsers();
     } catch (ex) {

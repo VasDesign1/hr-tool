@@ -35,8 +35,12 @@ export async function requireRole(expected) {
         location.replace(pathTo("set-password.html"));
         return;
       }
-      if (expected && profile.role !== expected) {
-        const target = profile.role === "admin" ? "admin/index.html" : "app/index.html";
+      // `expected` may be a role string or an array of accepted roles.
+      const allowed = expected ? (Array.isArray(expected) ? expected : [expected]) : null;
+      if (allowed && !allowed.includes(profile.role)) {
+        const target = (profile.role === "admin" || profile.role === "viewer")
+          ? "admin/index.html"
+          : "app/index.html";
         location.replace(pathTo(target));
         return;
       }

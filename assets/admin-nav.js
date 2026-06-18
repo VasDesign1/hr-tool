@@ -63,7 +63,7 @@ export function renderAdminNav(profile, currentPage) {
         <div class="avatar">${escapeHtml(initials)}</div>
         <div class="who">
           <div class="name">${escapeHtml(profile.name || profile.email || "Admin")}</div>
-          <div class="role">Administrator</div>
+          <div class="role">${profile.role === "viewer" ? "Viewer · read-only" : "Administrator"}</div>
         </div>
         <button id="logoutBtn" title="Sign out">${ICONS.logout}</button>
       </div>
