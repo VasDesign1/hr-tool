@@ -129,16 +129,12 @@ function setBadge(pageId, count, pulse) {
   });
 }
 
-// Tiny role + test pills shown right below the "HR Portal" line in the brand block.
+// Tiny pills shown right below the "HR Portal" line in the brand block.
+// Only shown for special roles: VIEWER and TEST. Plain admin/contractor get nothing.
 export function roleBadgesHtml(profile) {
-  const r = profile?.role;
-  const label = r === "admin" ? "ADMIN"
-              : r === "viewer" ? "VIEWER"
-              : r === "contractor" ? "CONTRACTOR"
-              : "";
   const parts = [];
-  if (label) parts.push(`<span class="role-badge ${r}">${label}</span>`);
-  if (profile?.testAccount) parts.push(`<span class="role-badge test">TEST</span>`);
+  if (profile?.role === "viewer") parts.push(`<span class="role-badge viewer">VIEWER</span>`);
+  if (profile?.testAccount)       parts.push(`<span class="role-badge test">TEST</span>`);
   return parts.join("");
 }
 
