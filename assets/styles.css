@@ -670,8 +670,11 @@ table.data td .actions button { padding: 6px 11px; font-size: 12px; }
 body.viewer-mode .write-action,
 body.viewer-mode .actions,
 body.viewer-mode #addBtn,
-body.viewer-mode .toolbar > button:not(.ghost):not([data-allow-viewer]),
-body.viewer-mode .toolbar > .row > button:not(.ghost):not([data-allow-viewer]),
+body.viewer-mode #bulkAccrueBtn,
+body.viewer-mode #requestLeaveBtn,
+body.viewer-mode #requestFixBtn,
+body.viewer-mode .toolbar > button:not([data-allow-viewer]),
+body.viewer-mode .toolbar > .row > button:not([data-allow-viewer]),
 body.viewer-mode form .actions button[type="submit"],
 body.viewer-mode form button.danger,
 body.viewer-mode button[data-add],
@@ -680,6 +683,12 @@ body.viewer-mode button[data-act] {
   opacity: 0.45;
   pointer-events: none;
   filter: grayscale(15%);
+}
+/* Restore interactivity for safe toolbar controls explicitly opted-in */
+body.viewer-mode .toolbar > .row > button[data-allow-viewer] {
+  opacity: 1;
+  pointer-events: auto;
+  filter: none;
 }
 body.viewer-mode .session-chip,
 body.viewer-mode .cal-entry {
