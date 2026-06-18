@@ -26,7 +26,13 @@
         <option value="30" selected>Last 30 days</option>
         <option value="60">Last 60 days</option>
         <option value="90">Last 90 days</option>
+        <option value="custom">Custom range…</option>
       </select>
+      <span id="customRangeWrap" style="display:none; gap:8px; align-items:center">
+        <input type="date" id="customStart" style="max-width:160px">
+        <span class="muted">→</span>
+        <input type="date" id="customEnd" style="max-width:160px">
+      </span>
     </div>
   </div>
 
@@ -249,10 +255,33 @@
     return entries;
   }
 
+  // Resolve the active range — either a "last N days" preset or a custom start/end pair.
+  function resolveRange() {
+    if (rangePick.value === "custom") {
+      const s = document.getElementById("customStart").value;
+      const e = document.getElementById("customEnd").value;
+      if (!s || !e) return null;
+      const keys = [];
+      const [sy, sm, sd] = s.split("-").map(Number);
+      const [ey, em, ed] = e.split("-").map(Number);
+      let cur = Date.UTC(sy, sm - 1, sd);
+      const end = Date.UTC(ey, em - 1, ed);
+      while (cur <= end) {
+        const dt = new Date(cur);
+        keys.unshift(`${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,"0")}-${String(dt.getUTCDate()).padStart(2,"0")}`);
+        cur += 86_400_000;
+      }
+      return { keys, n: keys.length };
+    }
+    const n = Number(rangePick.value);
+    return { keys: lastNDateKeys(n), n };
+  }
+
   async function loadUserAnalytics() {
     const uid = userPick.value;       // "" => All contractors
-    const n   = Number(rangePick.value);
-    const keys = lastNDateKeys(n);
+    const r = resolveRange();
+    if (!r) return; // custom not filled in yet
+    const { keys, n } = r;
     const oldestKey = keys[keys.length - 1];
     const todayKey  = keys[0];
     const activeUsers = users.filter(u => u.active !== false);
@@ -428,8 +457,9 @@
   }
 
   async function loadTeamChart() {
-    const n = Number(rangePick.value);
-    const keys = lastNDateKeys(n);
+    const r = resolveRange();
+    if (!r) return; // custom not filled in yet
+    const { keys } = r;
     const oldestKey = keys[keys.length - 1];
     const todayKey  = keys[0];
 
@@ -480,7 +510,26 @@
   }
 
   userPick.addEventListener("change", () => { loadUserAnalytics(); });
-  rangePick.addEventListener("change", () => { loadUserAnalytics(); loadTeamChart(); });
+  rangePick.addEventListener("change", () => {
+    // Reveal / hide custom-date inputs when toggling the preset selector.
+    const wrap = document.getElementById("customRangeWrap");
+    if (rangePick.value === "custom") {
+      wrap.style.display = "inline-flex";
+      // Default custom range = last 30 days if blank
+      const cs = document.getElementById("customStart");
+      const ce = document.getElementById("customEnd");
+      if (!cs.value || !ce.value) {
+        const today = melDateKey();
+        cs.value = lastNDateKeys(30)[29];
+        ce.value = today;
+      }
+    } else {
+      wrap.style.display = "none";
+    }
+    loadUserAnalytics(); loadTeamChart();
+  });
+  document.getElementById("customStart").addEventListener("change", () => { loadUserAnalytics(); loadTeamChart(); });
+  document.getElementById("customEnd").addEventListener("change", () => { loadUserAnalytics(); loadTeamChart(); });
 
   // Always render — "All contractors" is the default selection and needs a load too.
   loadUserAnalytics().catch(e => console.error("loadUserAnalytics:", e));
