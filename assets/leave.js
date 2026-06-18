@@ -53,6 +53,17 @@ export function computeBalance(timeEntries, approvedLeaveRequests, user) {
   const openingHours = ((user?.openingBalanceDays) || 0) * DAILY_HOURS;
   const accrualStart = user?.accrualStartDate || null;
 
+  // Per-event ledger so admin can audit every credit + debit going into the balance.
+  const ledger = [];
+  if (openingHours > 0) {
+    ledger.push({
+      date: accrualStart || "—",
+      kind: "opening",
+      hours: openingHours,
+      note: "Opening balance"
+    });
+  }
+
   let accrued = 0;
   if (accrualStart) {
     // When `accrueAllWeeks` is true, every fully-passed week from accrualStart accrues
@@ -80,18 +91,51 @@ export function computeBalance(timeEntries, approvedLeaveRequests, user) {
     // Walk weeks. Only accrue for weeks whose Sunday has fully passed (Sun < today).
     while (cursor + 6 * 86_400_000 < todayMs) {
       let worked = forceAccrue;
+      const scanStart = Math.max(cursor, startMs);
+      const scanEnd   = cursor + 6 * 86_400_000;
       if (!forceAccrue) {
-        const scanStart = Math.max(cursor, startMs);
-        const scanEnd   = cursor + 6 * 86_400_000;
         for (let d = scanStart; d <= scanEnd; d += 86_400_000) {
           const dt = new Date(d);
           const key = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,"0")}-${String(dt.getUTCDate()).padStart(2,"0")}`;
           if (workDates.has(key)) { worked = true; break; }
         }
       }
-      if (worked) accrued += WEEKLY_ACCRUAL_HOURS;
+      if (worked) {
+        accrued += WEEKLY_ACCRUAL_HOURS;
+        const monDt = new Date(cursor);
+        const monKey = `${monDt.getUTCFullYear()}-${String(monDt.getUTCMonth()+1).padStart(2,"0")}-${String(monDt.getUTCDate()).padStart(2,"0")}`;
+        const sunDt = new Date(cursor + 6 * 86_400_000);
+        const sunKey = `${sunDt.getUTCFullYear()}-${String(sunDt.getUTCMonth()+1).padStart(2,"0")}-${String(sunDt.getUTCDate()).padStart(2,"0")}`;
+        ledger.push({
+          date: sunKey,
+          kind: "accrual",
+          hours: WEEKLY_ACCRUAL_HOURS,
+          note: `Week ${monKey} → ${sunKey}${forceAccrue ? " (auto-accrued, no timesheet check)" : ""}`
+        });
+      }
       cursor += 7 * 86_400_000;
     }
+  }
+
+  // Approved-leave debits
+  for (const r of approvedLeaveRequests) {
+    if (r.hours) {
+      const range = r.startDate === r.endDate ? r.startDate : `${r.startDate} → ${r.endDate}`;
+      ledger.push({
+        date: r.startDate,
+        kind: "leave",
+        hours: -r.hours,
+        note: `Leave taken (${range})${r.reason ? " · " + r.reason : ""}`
+      });
+    }
+  }
+
+  ledger.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  // Annotate running balance for the UI
+  let running = 0;
+  for (const ev of ledger) {
+    running += ev.hours;
+    ev.runningHours = running;
   }
 
   let hoursWorked = 0;
@@ -108,7 +152,8 @@ export function computeBalance(timeEntries, approvedLeaveRequests, user) {
     taken,
     balance,
     hoursWorked,
-    rawBalance: balance
+    rawBalance: balance,
+    ledger
   };
 }
 

@@ -54,6 +54,17 @@
     <div id="balancesList" class="empty">Loading…</div>
   </div>
 
+  <!-- Accrual ledger / history -->
+  <div class="card">
+    <div class="toolbar">
+      <h2>Accrual history</h2>
+      <select id="ledgerUserPick" style="min-width:220px">
+        <option value="">— pick a contractor —</option>
+      </select>
+    </div>
+    <div id="ledgerList" class="empty">Pick a contractor to view every accrual + leave event affecting their balance.</div>
+  </div>
+
   <!-- Full leave history (all decisions logged) -->
   <div class="card">
     <div class="toolbar">
@@ -393,6 +404,77 @@
       }).join("")}</tbody>
     </table>`;
   }
+
+  // Populate ledger user picker (real contractors only)
+  const ledgerPick = document.getElementById("ledgerUserPick");
+  ledgerPick.innerHTML = `<option value="">— pick a contractor —</option>` +
+    Object.values(usersByUid)
+      .filter(u => u.active !== false && !u.testAccount)
+      .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
+      .map(u => `<option value="${u.uid}">${escapeHtml(u.name || u.email)}</option>`)
+      .join("");
+
+  async function loadLedger() {
+    const uid = ledgerPick.value;
+    const el = document.getElementById("ledgerList");
+    if (!uid) {
+      el.classList.add("empty");
+      el.innerHTML = "Pick a contractor to view every accrual + leave event affecting their balance.";
+      return;
+    }
+    el.classList.remove("empty");
+    el.innerHTML = `<div class="empty">Loading…</div>`;
+    try {
+      const [teSnap, lrSnap] = await Promise.all([
+        getDocs(query(collection(db, "timeEntries"), where("uid", "==", uid))),
+        getDocs(query(collection(db, "leaveRequests"), where("uid", "==", uid), where("status", "==", "approved")))
+      ]);
+      const timeEntries = []; teSnap.forEach(d => timeEntries.push(d.data()));
+      const approved = []; lrSnap.forEach(d => approved.push(d.data()));
+      const { ledger, balance } = computeBalance(timeEntries, approved, usersByUid[uid]);
+
+      if (!ledger || ledger.length === 0) {
+        el.classList.add("empty");
+        el.innerHTML = "No accrual events yet — set an opening balance or wait for the first completed week.";
+        return;
+      }
+
+      el.innerHTML = `
+        <table class="data">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Event</th>
+              <th style="text-align:right">Amount</th>
+              <th style="text-align:right">Running balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${ledger.map(ev => {
+              const isOpening = ev.kind === "opening";
+              const isLeave   = ev.kind === "leave";
+              const color = isLeave ? "color:#991B1B" : (isOpening ? "color:#1E40AF" : "color:#047857");
+              const sign = ev.hours >= 0 ? "+" : "−";
+              const amount = `${sign}${fmtLeave(Math.abs(ev.hours))}`;
+              return `<tr>
+                <td>${ev.date}</td>
+                <td>${escapeHtml(ev.note)}</td>
+                <td style="text-align:right; font-variant-numeric: tabular-nums; ${color}; font-weight:600">${amount}</td>
+                <td style="text-align:right; font-variant-numeric: tabular-nums; font-weight:600">${fmtLeave(ev.runningHours)}</td>
+              </tr>`;
+            }).join("")}
+            <tr style="border-top:2px solid var(--border)">
+              <td colspan="3" style="text-align:right; font-weight:600">Current balance</td>
+              <td style="text-align:right; font-variant-numeric: tabular-nums; font-weight:700; font-size:14px">${fmtLeave(balance)}</td>
+            </tr>
+          </tbody>
+        </table>
+      `;
+    } catch (ex) {
+      el.innerHTML = `<div class="empty" style="color:var(--bad)">Could not load: ${ex.message || ex.code || ex}</div>`;
+    }
+  }
+  ledgerPick.addEventListener("change", loadLedger);
 
   loadCalendar();
   startPendingLive();
