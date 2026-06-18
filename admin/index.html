@@ -106,7 +106,7 @@
   import { renderAdminNav, escapeHtml, getInitials } from "../assets/admin-nav.js";
   import { melTimeShort, fmtHours, melDateKey, fmtDateShort, fmtDay, fmtAU, fmtAUDow, fmtAUShort } from "../assets/time.js";
   import { fmtLeave } from "../assets/leave.js";
-  import { collection, query, where, getDocs, onSnapshot } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+  import { collection, query, where, getDocs, getDoc, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const { profile } = await requireRole("admin");
   renderAdminNav(profile, "dashboard");
@@ -122,7 +122,7 @@
   function startLive() {
     onSnapshot(
       query(collection(db, "users"), where("role", "==", "contractor"), where("active", "==", true)),
-      (snap) => {
+      async (snap) => {
         allContractors = [];
         const active = [];
         snap.forEach(d => {
@@ -134,10 +134,19 @@
               uid: d.id,
               name: u.name || u.email,
               start: u.clockedInAt.toDate(),
-              breakStart: u.currentBreakStartAt?.toDate?.() || null
+              breakStart: u.currentBreakStartAt?.toDate?.() || null,
+              currentEntryId: u.currentEntryId
             });
           }
         });
+
+        // Fetch each active user's open entry to pick up closed-break minutes for the day.
+        await Promise.all(active.map(async (a) => {
+          try {
+            const eSnap = await getDoc(doc(db, "timeEntries", a.currentEntryId));
+            a.closedBreakMins = eSnap.exists() ? (eSnap.data().breakMinutes || 0) : 0;
+          } catch (e) { a.closedBreakMins = 0; }
+        }));
 
         document.getElementById("statActive").textContent = allContractors.length;
         // "On shift" = currently working (NOT on break)  —  mutually exclusive with "On break"
@@ -176,11 +185,16 @@
             : `<span class="status-pill working"><span class="dot"></span>Working</span>`;
           const stampMs = onBreak ? a.breakStart.getTime() : a.start.getTime();
           const shiftTotalMs = Date.now() - a.start.getTime();
+          // Total break time today = closed-break minutes from open entry + in-progress break (if any)
+          const closedBreakMs = (a.closedBreakMins || 0) * 60_000;
+          const liveBreakMs = onBreak ? (Date.now() - a.breakStart.getTime()) : 0;
+          const totalBreakMs = closedBreakMs + liveBreakMs;
           const tipHtml = `
             <strong>${escapeHtml(a.name)}</strong>
             <div style="margin-top:4px">Clocked in at ${melTimeShort(a.start)}</div>
             ${onBreak ? `<div>On break since ${melTimeShort(a.breakStart)}</div>` : ""}
             <div class="muted" style="margin-top:4px">Total shift time: ${fmtHours(shiftTotalMs / 3_600_000)}</div>
+            <div class="muted">Total break time: ${totalBreakMs > 0 ? fmtHours(totalBreakMs / 3_600_000) : "—"}</div>
           `;
           return `
           <div class="live-row" data-stamp="${stampMs}" data-mode="${onBreak ? "break" : "work"}">
