@@ -117,6 +117,13 @@
           <input type="date" id="editAccrualStart">
         </div>
       </div>
+      <label style="display:flex; align-items:flex-start; gap:8px; margin-top:10px; font-size:13px; color:var(--text); font-weight:500; line-height:1.4">
+        <input type="checkbox" id="editAccrueAllWeeks" style="width:auto; margin-top:2px">
+        <span>
+          Always accrue (don't check timesheets)
+          <span class="muted" style="font-size:11px; display:block; font-weight:400">Useful when older work history isn't tracked in this tool — accrues 2.92h per completed week from the start date no matter what.</span>
+        </span>
+      </label>
       <label style="display:flex; align-items:center; gap:8px; margin-top:14px; font-size:14px; color:var(--text); font-weight:500">
         <input type="checkbox" id="editTestAccount" style="width:auto">
         Test account
@@ -230,6 +237,7 @@
       document.getElementById("editRole").value = u.role || "contractor";
       document.getElementById("editOpeningBalance").value = u.openingBalanceDays ?? "";
       document.getElementById("editAccrualStart").value = u.accrualStartDate || "";
+      document.getElementById("editAccrueAllWeeks").checked = !!u.accrueAllWeeks;
       document.getElementById("editTestAccount").checked = !!u.testAccount;
       document.getElementById("editErr").textContent = "";
       document.getElementById("editModal").classList.add("open");
@@ -398,9 +406,10 @@
     const obRaw = document.getElementById("editOpeningBalance").value.trim();
     const openingBalanceDays = obRaw === "" ? 0 : Number(obRaw);
     const accrualStartDate = document.getElementById("editAccrualStart").value || null;
+    const accrueAllWeeks = document.getElementById("editAccrueAllWeeks").checked;
     const testAccount = document.getElementById("editTestAccount").checked;
     try {
-      await updateDoc(doc(db, "users", uid), { name, role, openingBalanceDays, accrualStartDate, testAccount });
+      await updateDoc(doc(db, "users", uid), { name, role, openingBalanceDays, accrualStartDate, accrueAllWeeks, testAccount });
       document.getElementById("editModal").classList.remove("open");
       loadUsers();
     } catch (ex) {

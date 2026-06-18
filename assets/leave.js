@@ -55,10 +55,16 @@ export function computeBalance(timeEntries, approvedLeaveRequests, user) {
 
   let accrued = 0;
   if (accrualStart) {
-    // Index every date the contractor had real work hours on
+    // When `accrueAllWeeks` is true, every fully-passed week from accrualStart accrues
+    // regardless of whether the contractor had any timesheet entries.
+    // Useful when older time-tracking data isn't in the tool yet.
+    const forceAccrue = !!user?.accrueAllWeeks;
+
     const workDates = new Set();
-    for (const e of timeEntries) {
-      if (e.hoursWorked && e.hoursWorked > 0) workDates.add(e.date);
+    if (!forceAccrue) {
+      for (const e of timeEntries) {
+        if (e.hoursWorked && e.hoursWorked > 0) workDates.add(e.date);
+      }
     }
 
     // Anchor on the Monday of the week containing accrualStart
@@ -73,13 +79,15 @@ export function computeBalance(timeEntries, approvedLeaveRequests, user) {
 
     // Walk weeks. Only accrue for weeks whose Sunday has fully passed (Sun < today).
     while (cursor + 6 * 86_400_000 < todayMs) {
-      const scanStart = Math.max(cursor, startMs);
-      const scanEnd   = cursor + 6 * 86_400_000;
-      let worked = false;
-      for (let d = scanStart; d <= scanEnd; d += 86_400_000) {
-        const dt = new Date(d);
-        const key = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,"0")}-${String(dt.getUTCDate()).padStart(2,"0")}`;
-        if (workDates.has(key)) { worked = true; break; }
+      let worked = forceAccrue;
+      if (!forceAccrue) {
+        const scanStart = Math.max(cursor, startMs);
+        const scanEnd   = cursor + 6 * 86_400_000;
+        for (let d = scanStart; d <= scanEnd; d += 86_400_000) {
+          const dt = new Date(d);
+          const key = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,"0")}-${String(dt.getUTCDate()).padStart(2,"0")}`;
+          if (workDates.has(key)) { worked = true; break; }
+        }
       }
       if (worked) accrued += WEEKLY_ACCRUAL_HOURS;
       cursor += 7 * 86_400_000;
