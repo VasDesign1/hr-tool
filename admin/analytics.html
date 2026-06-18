@@ -435,14 +435,30 @@
 
     const hoursByUid = {};
     const breakHByUid = {};
+    const nowMs = Date.now();
     await Promise.all(users.filter(u => u.active !== false).map(async (u) => {
       const teSnap = await getDocs(query(collection(db, "timeEntries"), where("uid", "==", u.uid)));
       let h = 0, bm = 0;
       teSnap.forEach(d => {
         const e = d.data();
-        if (e.date >= oldestKey && e.date <= todayKey) {
-          if (e.hoursWorked) h += e.hoursWorked;
+        if (e.date < oldestKey || e.date > todayKey) return;
+        // Closed shift
+        if (e.clockOutUTC && e.hoursWorked) {
+          h += e.hoursWorked;
           if (e.breakMinutes) bm += e.breakMinutes;
+          return;
+        }
+        // Open shift today — synthesise live worked + break
+        if (!e.clockOutUTC && e.date === todayKey && e.clockInUTC?.toDate) {
+          const startMs = e.clockInUTC.toDate().getTime();
+          const closedBreakMs = (e.breakMinutes || 0) * 60_000;
+          let openBreakMs = 0;
+          if (u.currentEntryId === d.id && u.currentBreakStartAt?.toDate) {
+            openBreakMs = nowMs - u.currentBreakStartAt.toDate().getTime();
+          }
+          const liveH = Math.max(0, (nowMs - startMs - closedBreakMs - openBreakMs) / 3_600_000);
+          h += liveH;
+          bm += (closedBreakMs + openBreakMs) / 60_000;
         }
       });
       hoursByUid[u.uid] = h;
@@ -466,8 +482,9 @@
   userPick.addEventListener("change", () => { loadUserAnalytics(); });
   rangePick.addEventListener("change", () => { loadUserAnalytics(); loadTeamChart(); });
 
-  if (userPick.value) loadUserAnalytics();
-  loadTeamChart();
+  // Always render — "All contractors" is the default selection and needs a load too.
+  loadUserAnalytics().catch(e => console.error("loadUserAnalytics:", e));
+  loadTeamChart().catch(e => console.error("loadTeamChart:", e));
 </script>
 </body>
 </html>
