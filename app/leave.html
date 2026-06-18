@@ -180,10 +180,10 @@
       ? ` <span style="color:#94A3B8; font-size:10px; font-weight:400">(from ${fmtAU(profile.accrualStartDate)})</span>`
       : "";
     setTip("tipBalance", `<span class="head">Leave balance</span><ul>
-        <li>Opening balance${accrualStartLabel}<span class="right">${fmtLeave(opening)}</span></li>
-        <li>Accrued<span class="right">${fmtLeave(accrued)}</span></li>
-        <li>Taken<span class="right">${fmtLeave(taken)}</span></li>
-        <li>Balance<span class="right">${fmtLeave(balance)}</span></li>
+        <li><span>Opening balance${accrualStartLabel}</span><span class="right">${fmtLeave(opening)}</span></li>
+        <li><span>Accrued</span><span class="right">${fmtLeave(accrued)}</span></li>
+        <li><span>Taken</span><span class="right">${fmtLeave(taken)}</span></li>
+        <li><span>Balance</span><span class="right">${fmtLeave(balance)}</span></li>
       </ul>`);
     const accrualStartStr = profile.accrualStartDate
       ? `Accruing from ${profile.accrualStartDate}`

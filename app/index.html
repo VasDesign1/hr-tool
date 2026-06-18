@@ -487,10 +487,10 @@
       ? ` <span style="color:#94A3B8; font-size:10px; font-weight:400">(from ${profile.accrualStartDate.split("-").reverse().join("/")})</span>`
       : "";
     const summaryRows = `
-      <li>Opening balance${accrualStartLabel}<span class="right">${fmtLeave(opening)}</span></li>
-      <li>Accrued<span class="right">${fmtLeave(accrued)}</span></li>
-      <li>Taken<span class="right">${fmtLeave(taken)}</span></li>
-      <li>Balance<span class="right">${fmtLeave(balance)}</span></li>`;
+      <li><span>Opening balance${accrualStartLabel}</span><span class="right">${fmtLeave(opening)}</span></li>
+      <li><span>Accrued</span><span class="right">${fmtLeave(accrued)}</span></li>
+      <li><span>Taken</span><span class="right">${fmtLeave(taken)}</span></li>
+      <li><span>Balance</span><span class="right">${fmtLeave(balance)}</span></li>`;
     setTip("tipLeave", takenRows.length
       ? `<span class="head">Leave balance</span><ul>${summaryRows}</ul><span class="head" style="margin-top:8px">Recent leave</span><ul>${takenRows.join("")}</ul>`
       : `<span class="head">Leave balance</span><ul>${summaryRows}</ul>`);
