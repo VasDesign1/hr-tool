@@ -118,11 +118,14 @@
 
   // Load contractors once
   const usnap = await getDocs(query(collection(db, "users"), where("role", "==", "contractor")));
-  const users = [];
-  usnap.forEach(d => users.push({ uid: d.id, ...d.data() }));
-  users.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  const allUsers = [];
+  usnap.forEach(d => allUsers.push({ uid: d.id, ...d.data() }));
+  allUsers.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  // `users` (used for "All contractors" aggregates) excludes test accounts.
+  // The picker still includes them so admin can drill in.
+  const users = allUsers.filter(u => !u.testAccount);
   userPick.innerHTML = `<option value="">All contractors</option>` +
-    users.map(u => `<option value="${u.uid}">${escapeHtml(u.name || u.email)}</option>`).join("");
+    allUsers.map(u => `<option value="${u.uid}">${escapeHtml(u.name || u.email)}${u.testAccount ? " (TEST)" : ""}</option>`).join("");
   // default to "All contractors" so admin sees comparison upfront
 
   // Vibrant per-contractor palette

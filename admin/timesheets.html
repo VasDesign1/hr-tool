@@ -146,13 +146,15 @@
 
   // ---- Load contractors once ----
   const usnap = await getDocs(query(collection(db, "users"), where("role", "==", "contractor")));
-  const users = [];
-  usnap.forEach(d => users.push({ uid: d.id, ...d.data() }));
-  users.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-  const usersByUid = Object.fromEntries(users.map(u => [u.uid, u]));
+  const allUsers = [];                                              // every contractor (incl. test)
+  usnap.forEach(d => allUsers.push({ uid: d.id, ...d.data() }));
+  allUsers.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  const users = allUsers.filter(u => !u.testAccount);               // real contractors (for aggregates)
+  const usersByUid = Object.fromEntries(allUsers.map(u => [u.uid, u]));
 
+  // User picker still includes test accounts (with badge) so admin can drill into them.
   userPick.innerHTML = `<option value="">— select contractor —</option>` +
-    users.map(u => `<option value="${u.uid}">${escapeHtml(u.name || u.email)}</option>`).join("");
+    allUsers.map(u => `<option value="${u.uid}">${escapeHtml(u.name || u.email)}${u.testAccount ? " (TEST)" : ""}</option>`).join("");
 
   // ===================================================================
   // PENDING EDIT REQUESTS

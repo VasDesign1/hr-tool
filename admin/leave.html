@@ -98,6 +98,8 @@
   const usnap = await getDocs(query(collection(db, "users"), where("role", "==", "contractor")));
   const usersByUid = {};
   usnap.forEach(d => usersByUid[d.id] = { uid: d.id, ...d.data() });
+  // Helper — true when the leave request belongs to a test account that should be hidden
+  const isTestRequest = (r) => !!usersByUid[r.uid]?.testAccount;
 
   // ---- Pending queue (live) ----
   function startPendingLive() {
@@ -110,7 +112,11 @@
   function renderPending(snap) {
     const listEl = document.getElementById("pendingList");
     const reqs = [];
-    snap.forEach(d => reqs.push({ id: d.id, ...d.data() }));
+    snap.forEach(d => {
+      const r = { id: d.id, ...d.data() };
+      if (isTestRequest(r)) return;  // hide test accounts from queue
+      reqs.push(r);
+    });
     reqs.sort((a, b) => (a.submittedAt?.toMillis?.() || 0) - (b.submittedAt?.toMillis?.() || 0));
 
     document.getElementById("pendingCount").textContent = reqs.length === 0 ? "" : `${reqs.length} waiting`;
@@ -214,6 +220,7 @@
     const upcoming = [];
     snap.forEach(d => {
       const r = { id: d.id, ...d.data() };
+      if (isTestRequest(r)) return;  // hide test accounts
       if (r.endDate >= todayKey) upcoming.push(r);
     });
     upcoming.sort((a, b) => a.startDate.localeCompare(b.startDate));
@@ -247,7 +254,7 @@
   async function loadBalances() {
     const listEl = document.getElementById("balancesList");
     listEl.innerHTML = `<div class="empty">Loading…</div>`;
-    const uids = Object.keys(usersByUid).filter(u => usersByUid[u].active !== false);
+    const uids = Object.keys(usersByUid).filter(u => usersByUid[u].active !== false && !usersByUid[u].testAccount);
     if (uids.length === 0) {
       listEl.classList.add("empty");
       listEl.innerHTML = "No active contractors.";
@@ -287,6 +294,7 @@
     snap.forEach(d => {
       const r = { id: d.id, ...d.data() };
       if (r.status === "cancelled") return; // hide cancelled from team calendar to reduce clutter
+      if (isTestRequest(r)) return; // hide test accounts from team calendar
       const u = usersByUid[r.uid];
       const shortName = (u?.name || r.requesterName || "?")
         .split(" ")[0]; // first name only to fit in calendar cell
@@ -331,7 +339,11 @@
     const listEl = document.getElementById("historyList");
     const snap = await getDocs(collection(db, "leaveRequests"));
     const reqs = [];
-    snap.forEach(d => reqs.push({ id: d.id, ...d.data() }));
+    snap.forEach(d => {
+      const r = { id: d.id, ...d.data() };
+      if (isTestRequest(r)) return; // hide test accounts from history
+      reqs.push(r);
+    });
     if (reqs.length === 0) {
       listEl.classList.add("empty");
       listEl.innerHTML = "No leave requests in the system yet.";

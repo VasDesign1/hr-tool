@@ -127,6 +127,7 @@
         const active = [];
         snap.forEach(d => {
           const u = d.data();
+          if (u.testAccount) return; // exclude test accounts from dashboard aggregates
           allContractors.push({ uid: d.id, ...u });
           if (u.currentEntryId && u.clockedInAt) {
             active.push({
@@ -227,7 +228,10 @@
   async function loadWeekChart() {
     const usnap = await getDocs(query(collection(db, "users"), where("role", "==", "contractor"), where("active", "==", true)));
     const contractors = [];
-    usnap.forEach(d => contractors.push({ uid: d.id, ...d.data() }));
+    usnap.forEach(d => {
+      const u = { uid: d.id, ...d.data() };
+      if (!u.testAccount) contractors.push(u);  // exclude test accounts
+    });
     contractors.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
     const monKey = startOfWeekKey();
@@ -301,7 +305,10 @@
     const todayKey = melDateKey();
     const usnap = await getDocs(query(collection(db, "users"), where("role", "==", "contractor"), where("active", "==", true)));
     const userList = [];
-    usnap.forEach(d => userList.push({ uid: d.id, ...d.data() }));
+    usnap.forEach(d => {
+      const u = { uid: d.id, ...d.data() };
+      if (!u.testAccount) userList.push(u);  // exclude test accounts
+    });
     userList.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
     const teSnap = await getDocs(query(collection(db, "timeEntries"), where("date", "==", todayKey)));
@@ -409,6 +416,7 @@
     const entries = [];
     teSnap.forEach(d => {
       const e = { id: d.id, ...d.data() };
+      if (usersByUid[e.uid]?.testAccount) return;  // skip test accounts
       if (e.autoClosed && e.date >= oldestKey) entries.push(e);
     });
 
@@ -454,6 +462,7 @@
     const soon = [];
     lrSnap.forEach(d => {
       const r = { id: d.id, ...d.data() };
+      if (usersByUid[r.uid]?.testAccount) return;  // skip test accounts
       if (r.startDate <= horizonKey && r.endDate >= todayKey) soon.push(r);
     });
     if (soon.length === 0) {

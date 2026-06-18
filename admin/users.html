@@ -70,6 +70,11 @@
       <input type="text" id="editName" required>
       <label>Email <span class="muted" style="font-size:11px">(read-only)</span></label>
       <input type="email" id="editEmail" readonly disabled>
+      <label style="display:flex; align-items:center; gap:8px; margin-top:14px; font-size:14px; color:var(--text); font-weight:500">
+        <input type="checkbox" id="editTestAccount" style="width:auto">
+        Test account
+        <span class="muted" style="font-size:11px; font-weight:400">(hidden from team totals, charts and queues — but still visible to admin)</span>
+      </label>
       <div class="error" id="editErr"></div>
       <div class="actions">
         <button type="button" class="ghost" id="editCancelBtn">Cancel</button>
@@ -116,6 +121,7 @@
     const rows = [];
     snap.forEach(d => {
       const u = d.data();
+      const testBadge = u.testAccount ? ` <span class="badge test">TEST</span>` : "";
       const status = !u.active
         ? `<span class="badge off">Deactivated</span>`
         : u.mustChangePassword
@@ -123,7 +129,7 @@
           : `<span class="badge ok">Active</span>`;
       rows.push(`
         <tr>
-          <td>${escapeHtml(u.name || "—")}</td>
+          <td>${escapeHtml(u.name || "—")}${testBadge}</td>
           <td>${escapeHtml(u.email)}</td>
           <td>${status}</td>
           <td>
@@ -157,6 +163,7 @@
       document.getElementById("editUid").value = data.uid;
       document.getElementById("editName").value = u.name || "";
       document.getElementById("editEmail").value = u.email;
+      document.getElementById("editTestAccount").checked = !!u.testAccount;
       document.getElementById("editErr").textContent = "";
       document.getElementById("editModal").classList.add("open");
     } else if (act === "reset") {
@@ -255,8 +262,9 @@
     e.preventDefault();
     const uid = document.getElementById("editUid").value;
     const name = document.getElementById("editName").value.trim();
+    const testAccount = document.getElementById("editTestAccount").checked;
     try {
-      await updateDoc(doc(db, "users", uid), { name });
+      await updateDoc(doc(db, "users", uid), { name, testAccount });
       document.getElementById("editModal").classList.remove("open");
       loadUsers();
     } catch (ex) {
