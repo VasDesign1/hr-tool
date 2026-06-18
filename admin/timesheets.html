@@ -42,14 +42,20 @@
   <div class="card">
     <div class="toolbar">
       <h2>Period summary<span class="live-dot" title="Live"></span></h2>
-      <div class="row">
+      <div class="row" style="flex-wrap:wrap; gap:8px">
         <span id="periodChartToggle"></span>
         <select id="periodPick" style="min-width:140px">
           <option value="day">Daily</option>
           <option value="week" selected>This week</option>
           <option value="month">This month</option>
           <option value="quarter">Last 90 days</option>
+          <option value="custom">Custom range…</option>
         </select>
+        <span id="periodCustomWrap" style="display:none; gap:8px; align-items:center">
+          <input type="date" id="periodCustomStart" style="max-width:160px">
+          <span class="muted">→</span>
+          <input type="date" id="periodCustomEnd" style="max-width:160px">
+        </span>
       </div>
     </div>
     <div id="periodMeta" class="muted" style="font-size:13px; margin-bottom:10px">—</div>
@@ -60,14 +66,20 @@
   <div class="card">
     <div class="toolbar">
       <h2>Contractor history</h2>
-      <div class="row">
+      <div class="row" style="flex-wrap:wrap; gap:8px">
         <select id="userPick" style="min-width:200px"><option value="">— select contractor —</option></select>
         <select id="rangePick" style="min-width:140px">
           <option value="7">Last 7 days</option>
           <option value="14">Last 14 days</option>
           <option value="30" selected>Last 30 days</option>
           <option value="60">Last 60 days</option>
+          <option value="custom">Custom range…</option>
         </select>
+        <span id="historyCustomWrap" style="display:none; gap:8px; align-items:center">
+          <input type="date" id="historyCustomStart" style="max-width:160px">
+          <span class="muted">→</span>
+          <input type="date" id="historyCustomEnd" style="max-width:160px">
+        </span>
       </div>
     </div>
     <div id="summary" class="row" style="gap:24px; margin-bottom:16px; color:var(--muted)"></div>
@@ -493,6 +505,27 @@
   // ===================================================================
   // HISTORY DRILL-DOWN
   // ===================================================================
+  // Resolve the contractor-history range — preset N-days or a custom pair.
+  function historyRange() {
+    if (rangePick.value === "custom") {
+      const s = document.getElementById("historyCustomStart")?.value;
+      const e = document.getElementById("historyCustomEnd")?.value;
+      if (!s || !e) return null;
+      const keys = [];
+      const [sy, sm, sd] = s.split("-").map(Number);
+      const [ey, em, ed] = e.split("-").map(Number);
+      let cur = Date.UTC(sy, sm - 1, sd);
+      const end = Date.UTC(ey, em - 1, ed);
+      while (cur <= end) {
+        const dt = new Date(cur);
+        keys.unshift(`${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,"0")}-${String(dt.getUTCDate()).padStart(2,"0")}`);
+        cur += 86_400_000;
+      }
+      return keys;
+    }
+    return lastNDateKeys(Number(rangePick.value));
+  }
+
   async function loadHistory() {
     const uid = userPick.value;
     if (!uid) {
@@ -501,8 +534,13 @@
       summaryEl.innerHTML = "";
       return;
     }
-    const n = Number(rangePick.value);
-    const keys = lastNDateKeys(n);
+    const keys = historyRange();
+    if (!keys) {
+      historyList.classList.add("empty");
+      historyList.innerHTML = "Pick a custom start and end date.";
+      summaryEl.innerHTML = "";
+      return;
+    }
     const oldestKey = keys[keys.length - 1];
     historyList.classList.remove("empty");
     historyList.innerHTML = `<div class="empty">Loading…</div>`;
@@ -559,7 +597,24 @@
   }
 
   userPick.addEventListener("change", loadHistory);
-  rangePick.addEventListener("change", loadHistory);
+  rangePick.addEventListener("change", () => {
+    const wrap = document.getElementById("historyCustomWrap");
+    if (rangePick.value === "custom") {
+      wrap.style.display = "inline-flex";
+      const cs = document.getElementById("historyCustomStart");
+      const ce = document.getElementById("historyCustomEnd");
+      if (!cs.value || !ce.value) {
+        const today = melDateKey();
+        cs.value = lastNDateKeys(30)[29];
+        ce.value = today;
+      }
+    } else {
+      wrap.style.display = "none";
+    }
+    loadHistory();
+  });
+  document.getElementById("historyCustomStart").addEventListener("change", loadHistory);
+  document.getElementById("historyCustomEnd").addEventListener("change", loadHistory);
 
   // Same segment logic as contractor side, plus carry the entry id so chips stay clickable for edit.
   function entrySegmentsAdmin(e) {
@@ -641,6 +696,12 @@
     if (kind === "month") {
       const start = `${y}-${String(m).padStart(2,"0")}-01`;
       return { start, end: todayKey };
+    }
+    if (kind === "custom") {
+      const s = document.getElementById("periodCustomStart")?.value;
+      const e = document.getElementById("periodCustomEnd")?.value;
+      if (s && e) return { start: s, end: e };
+      return { start: todayKey, end: todayKey };
     }
     // quarter = last 90 days
     const startMs = today - 89 * 86_400_000;
@@ -764,8 +825,26 @@
     periodToggle.dataset.wired = "1";
   }
   document.getElementById("periodPick").addEventListener("change", () => {
+    // Show / hide custom date pickers when toggling Custom range…
+    const wrap = document.getElementById("periodCustomWrap");
+    if (document.getElementById("periodPick").value === "custom") {
+      wrap.style.display = "inline-flex";
+      const cs = document.getElementById("periodCustomStart");
+      const ce = document.getElementById("periodCustomEnd");
+      if (!cs.value || !ce.value) {
+        const today = melDateKey();
+        // Default custom = today's calendar month
+        const [y, m] = today.split("-");
+        cs.value = `${y}-${m}-01`;
+        ce.value = today;
+      }
+    } else {
+      wrap.style.display = "none";
+    }
     subscribePeriodSummary();
   });
+  document.getElementById("periodCustomStart").addEventListener("change", subscribePeriodSummary);
+  document.getElementById("periodCustomEnd").addEventListener("change", subscribePeriodSummary);
 
   // Live period summary — listener tracks the active period so it auto-re-renders on writes.
   let __periodUnsub = null;
