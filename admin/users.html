@@ -66,6 +66,31 @@
   </div>
 </div>
 
+<!-- Remove user modal -->
+<div class="modal-backdrop" id="removeModal">
+  <div class="modal">
+    <h2 style="color:#991B1B">Permanently remove user?</h2>
+    <p>This will delete <strong id="rmName">—</strong> and <strong>all their data</strong>:</p>
+    <ul style="font-size:13px; color:var(--muted); margin: 8px 0 14px 18px; line-height:1.7">
+      <li><span id="rmTeCount">…</span> time entries</li>
+      <li><span id="rmLrCount">…</span> leave requests</li>
+      <li><span id="rmErCount">…</span> fix requests</li>
+      <li>Their user profile</li>
+    </ul>
+    <p class="muted" style="font-size:12px; background:#FEF2F2; border:1px solid #FECACA; border-radius:6px; padding:10px 12px; margin-bottom:14px">
+      <strong>Heads up:</strong> their Firebase login can't be deleted from this tool (needs paid plan). They won't be able to sign in (no user record), but to re-add them later you'd need to use a different email — or remove their auth entry manually in the Firebase console.
+    </p>
+    <p class="muted" style="font-size:12px">If you just want to stop their access without losing history, use <strong>Deactivate</strong> instead.</p>
+    <label>Type <strong>DELETE</strong> to confirm</label>
+    <input type="text" id="rmConfirmInput" autocomplete="off" placeholder="DELETE">
+    <div class="error" id="rmErr"></div>
+    <div class="actions">
+      <button type="button" class="ghost" id="rmCancelBtn">Cancel</button>
+      <button type="button" class="danger" id="rmConfirmBtn" disabled>Permanently remove</button>
+    </div>
+  </div>
+</div>
+
 <!-- Edit user modal -->
 <div class="modal-backdrop" id="editModal">
   <div class="modal">
@@ -105,7 +130,7 @@
     getAuth, createUserWithEmailAndPassword, signOut, sendPasswordResetEmail
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
   import {
-    collection, query, where, getDocs, doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp
+    collection, query, where, getDocs, doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, writeBatch
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const { profile } = await requireRole(["admin", "viewer"]);
@@ -168,6 +193,7 @@
               ${u.active
                 ? `<button class="ghost" data-act="deactivate" data-uid="${d.id}">Deactivate</button>`
                 : `<button class="ghost" data-act="activate" data-uid="${d.id}">Reactivate</button>`}
+              <button class="ghost danger" data-act="remove" data-uid="${d.id}" data-name="${escapeHtml(u.name || u.email)}">Remove…</button>
             </div>
           </td>
         </tr>
@@ -208,6 +234,8 @@
         alert("Done — they'll set a new password next time they sign in.");
         loadUsers();
       } catch (e) { alert("Failed: " + e.message); }
+    } else if (act === "remove") {
+      openRemoveModal(data.uid, data.name);
     } else if (act === "deactivate") {
       if (!confirm("Deactivate this user? They'll be blocked from signing in until reactivated.")) return;
       await updateDoc(doc(db, "users", data.uid), { active: false });
@@ -286,6 +314,68 @@
   });
   document.getElementById("tpDoneBtn").addEventListener("click", () => {
     document.getElementById("tempPassModal").classList.remove("open");
+  });
+
+  // ---- Remove user modal (full hard-delete of Firestore data) ----
+  let __rmTargetUid = null;
+  async function openRemoveModal(uid, name) {
+    __rmTargetUid = uid;
+    document.getElementById("rmName").textContent = name || "this user";
+    document.getElementById("rmConfirmInput").value = "";
+    document.getElementById("rmConfirmBtn").disabled = true;
+    document.getElementById("rmErr").textContent = "";
+    document.getElementById("rmTeCount").textContent = "…";
+    document.getElementById("rmLrCount").textContent = "…";
+    document.getElementById("rmErCount").textContent = "…";
+    document.getElementById("removeModal").classList.add("open");
+    try {
+      const [te, lr, er] = await Promise.all([
+        getDocs(query(collection(db, "timeEntries"),       where("uid", "==", uid))),
+        getDocs(query(collection(db, "leaveRequests"),     where("uid", "==", uid))),
+        getDocs(query(collection(db, "timeEditRequests"),  where("uid", "==", uid)))
+      ]);
+      document.getElementById("rmTeCount").textContent = te.size;
+      document.getElementById("rmLrCount").textContent = lr.size;
+      document.getElementById("rmErCount").textContent = er.size;
+    } catch (e) {
+      console.error("count for remove modal:", e);
+    }
+  }
+  document.getElementById("rmCancelBtn").addEventListener("click", () => {
+    document.getElementById("removeModal").classList.remove("open");
+    __rmTargetUid = null;
+  });
+  document.getElementById("rmConfirmInput").addEventListener("input", (e) => {
+    document.getElementById("rmConfirmBtn").disabled = e.target.value.trim() !== "DELETE";
+  });
+  document.getElementById("rmConfirmBtn").addEventListener("click", async () => {
+    if (!__rmTargetUid) return;
+    const btn = document.getElementById("rmConfirmBtn");
+    const errEl = document.getElementById("rmErr");
+    errEl.textContent = "";
+    btn.disabled = true; btn.textContent = "Removing…";
+    try {
+      // Delete all their owned data in chunks of 400 (Firestore batch limit is 500)
+      async function deleteOwned(collName) {
+        const snap = await getDocs(query(collection(db, collName), where("uid", "==", __rmTargetUid)));
+        const docs = snap.docs;
+        for (let i = 0; i < docs.length; i += 400) {
+          const batch = writeBatch(db);
+          docs.slice(i, i + 400).forEach(d => batch.delete(d.ref));
+          await batch.commit();
+        }
+      }
+      await deleteOwned("timeEntries");
+      await deleteOwned("leaveRequests");
+      await deleteOwned("timeEditRequests");
+      await deleteDoc(doc(db, "users", __rmTargetUid));
+      document.getElementById("removeModal").classList.remove("open");
+      __rmTargetUid = null;
+      loadUsers();
+    } catch (ex) {
+      errEl.textContent = "Failed: " + (ex.message || ex.code);
+      btn.disabled = false; btn.textContent = "Permanently remove";
+    }
   });
 
   document.getElementById("editForm").addEventListener("submit", async (e) => {
