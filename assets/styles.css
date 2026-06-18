@@ -666,13 +666,18 @@ table.data td .actions button { padding: 6px 11px; font-size: 12px; }
 .badge.off      { background: var(--surface-3);   color: var(--muted); }
 .badge.bad      { background: var(--bad-soft);    color: #991B1B; }
 
-/* Viewer (read-only) mode — hide every write affordance across admin pages */
+/* Viewer (read-only) mode — write affordances stay VISIBLE but faded and non-interactive.
+   Viewer still gets the full admin layout; they just can't click anything that would write. */
 body.viewer-mode .write-action,
 body.viewer-mode .actions,
 body.viewer-mode #addBtn,
 body.viewer-mode .toolbar > button:not(.ghost):not([data-allow-viewer]),
-body.viewer-mode .toolbar .row > button:not(.ghost):not([data-allow-viewer]) {
-  display: none !important;
+body.viewer-mode .toolbar > .row > button:not(.ghost):not([data-allow-viewer]),
+body.viewer-mode form .actions button[type="submit"],
+body.viewer-mode form button.danger {
+  opacity: 0.45;
+  pointer-events: none;
+  filter: grayscale(15%);
 }
 body.viewer-mode .session-chip,
 body.viewer-mode .cal-entry {
@@ -686,6 +691,22 @@ body.viewer-mode .sidebar .brand .name small::after {
   content: " · viewer";
   color: #4338CA;
 }
+/* Tiny "READ ONLY" tag in the top-right of the topbar so it's obvious at a glance */
+body.viewer-mode .page-header::after {
+  content: "READ ONLY";
+  display: inline-block;
+  position: absolute;
+  top: 4px; right: 0;
+  background: #FEF2F2;
+  color: #991B1B;
+  border: 1px solid #FECACA;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+body.viewer-mode .page-header { position: relative; }
 
 /* "Live" indicator dot — sits beside card titles when their data is wired via onSnapshot */
 .live-dot {
