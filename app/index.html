@@ -204,27 +204,29 @@
   }
 
   function renderActivityTimeline(sessions, breakSegments) {
-    // Build ranges: work blocks (worked between clock-in / break-start, break-end / clock-out)
-    // and explicit break blocks. Result is a chronological list of time-range "blocks".
+    // Build blocks per session so we can tag the first work block "Shift started"
+    // and (if the session is closed) the last work block "Shift ended".
     const blocks = [];
     sessions.forEach(s => {
       const sessionBreaks = breakSegments
         .filter(b => b.start >= s.start && (s.end ? b.end <= s.end : true))
         .sort((a, b) => a.start - b.start);
+      const sessionBlocks = [];
       let cursor = s.start;
       sessionBreaks.forEach(b => {
-        if (b.start > cursor) {
-          blocks.push({ kind: "work", start: cursor, end: b.start });
-        }
-        blocks.push({ kind: "brk", start: b.start, end: b.end });
+        if (b.start > cursor) sessionBlocks.push({ kind: "work", start: cursor, end: b.start });
+        sessionBlocks.push({ kind: "brk", start: b.start, end: b.end });
         cursor = b.end;
       });
       if (s.end) {
-        if (s.end > cursor) blocks.push({ kind: "work", start: cursor, end: s.end });
+        if (s.end > cursor) sessionBlocks.push({ kind: "work", start: cursor, end: s.end });
       } else {
-        // open shift
-        blocks.push({ kind: "work", start: cursor, end: null, ongoing: true });
+        sessionBlocks.push({ kind: "work", start: cursor, end: null, ongoing: true });
       }
+      const workIdxs = sessionBlocks.map((b, i) => b.kind === "work" ? i : -1).filter(i => i >= 0);
+      if (workIdxs.length) sessionBlocks[workIdxs[0]].marker = "start";
+      if (s.end && workIdxs.length) sessionBlocks[workIdxs[workIdxs.length - 1]].marker = "end";
+      sessionBlocks.forEach(b => blocks.push(b));
     });
     // If currently on break, the last work-block ends at the break-start (already handled),
     // and an ongoing break exists in breakSegments only after resumed — but for in-progress break,
@@ -253,7 +255,11 @@
       const endTxt   = b.end ? melTimeShort(b.end) : "now";
       const durMs    = (b.end ? b.end.getTime() : Date.now()) - b.start.getTime();
       const durTxt   = b.kind === "work" ? fmtHours(durMs / 3_600_000) : fmtMinutes(durMs / 60_000);
-      const label    = b.kind === "work" ? "Worked" : "On break";
+      const label    = b.kind === "brk"
+                       ? "On break"
+                       : b.marker === "start" ? "Shift started"
+                       : b.marker === "end"   ? "Shift ended"
+                       : "Worked";
       const cls      = b.kind === "work" ? "start" : "brk";
       const ongoing  = b.ongoing ? ` <span class="meta">· in progress</span>` : "";
       return `

@@ -108,7 +108,7 @@
   import { requireRole } from "../assets/auth-router.js";
   import { renderAdminNav, escapeHtml } from "../assets/admin-nav.js";
   import { fmtHours, melDateKey, lastNDateKeys, fmtDay, MEL_TZ, fmtAU, fmtAUShort, fmtAUDow } from "../assets/time.js";
-  import { collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+  import { collection, query, where, getDocs, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const { profile } = await requireRole("admin");
   renderAdminNav(profile, "analytics");
@@ -221,8 +221,32 @@
   async function entriesInRange(uid, oldestKey, todayKey) {
     const teSnap = await getDocs(query(collection(db, "timeEntries"), where("uid", "==", uid)));
     const entries = [];
-    teSnap.forEach(d => entries.push(d.data()));
-    return entries.filter(e => e.date >= oldestKey && e.date <= todayKey);
+    const nowMs = Date.now();
+    const liveTodayKey = todayKey;
+    const usnap = await getDoc(doc(db, "users", uid));
+    const userRow = usnap.exists() ? usnap.data() : null;
+    teSnap.forEach(d => {
+      const e = { id: d.id, ...d.data() };
+      if (e.date < oldestKey || e.date > todayKey) return;
+      // Closed shift — use stored values
+      if (e.clockOutUTC && e.hoursWorked != null) { entries.push(e); return; }
+      // Open shift on today — synthesise live hoursWorked + breakMinutes
+      if (!e.clockOutUTC && e.date === liveTodayKey && e.clockInUTC?.toDate) {
+        const startMs = e.clockInUTC.toDate().getTime();
+        const closedBreakMs = (e.breakMinutes || 0) * 60_000;
+        let openBreakMs = 0;
+        if (userRow?.currentEntryId === e.id && userRow.currentBreakStartAt?.toDate) {
+          openBreakMs = nowMs - userRow.currentBreakStartAt.toDate().getTime();
+        }
+        const liveWorkH = Math.max(0, (nowMs - startMs - closedBreakMs - openBreakMs) / 3_600_000);
+        entries.push({
+          ...e,
+          hoursWorked: liveWorkH,
+          breakMinutes: (closedBreakMs + openBreakMs) / 60_000
+        });
+      }
+    });
+    return entries;
   }
 
   async function loadUserAnalytics() {

@@ -307,7 +307,8 @@
   loadWeekChart();
 
   // ----- Today's team activity — one column per contractor side-by-side -----
-  const ACTIVITY_PALETTE = ["#14B8A6","#3B82F6","#EAB308","#EF4444","#8B5CF6","#0EA5E9","#15803D","#F97316","#7E22CE","#94A3B8"];
+  // Use the shared VIVID_PALETTE so avatar colours match every chart in the app.
+  const { VIVID_PALETTE: ACTIVITY_PALETTE } = await import("../assets/chart-style.js");
 
   async function loadTeamActivity() {
     const todayKey = melDateKey();
@@ -340,23 +341,32 @@
         .filter(b => b.start && b.end)
         .sort((a, b) => a.start - b.start);
 
+      // Build segments for THIS entry first so we can flag the first/last work block.
+      const entryBlocks = [];
       let cursor = start;
       sessionBreaks.forEach(b => {
-        if (b.start > cursor) blocksByUid[e.uid].push({ kind: "work", start: cursor, end: b.start });
-        blocksByUid[e.uid].push({ kind: "brk", start: b.start, end: b.end });
+        if (b.start > cursor) entryBlocks.push({ kind: "work", start: cursor, end: b.start });
+        entryBlocks.push({ kind: "brk", start: b.start, end: b.end });
         cursor = b.end;
       });
       if (end) {
-        if (end > cursor) blocksByUid[e.uid].push({ kind: "work", start: cursor, end });
+        if (end > cursor) entryBlocks.push({ kind: "work", start: cursor, end });
       } else {
         if (u.currentBreakStartAt?.toDate) {
           const brkStart = u.currentBreakStartAt.toDate();
-          if (brkStart > cursor) blocksByUid[e.uid].push({ kind: "work", start: cursor, end: brkStart });
-          blocksByUid[e.uid].push({ kind: "brk", start: brkStart, end: null, ongoing: true });
+          if (brkStart > cursor) entryBlocks.push({ kind: "work", start: cursor, end: brkStart });
+          entryBlocks.push({ kind: "brk", start: brkStart, end: null, ongoing: true });
         } else {
-          blocksByUid[e.uid].push({ kind: "work", start: cursor, end: null, ongoing: true });
+          entryBlocks.push({ kind: "work", start: cursor, end: null, ongoing: true });
         }
       }
+
+      // Tag the first work block as "Shift started" and (if the entry is closed) the last as "Shift ended".
+      const workIdxs = entryBlocks.map((b, i) => b.kind === "work" ? i : -1).filter(i => i >= 0);
+      if (workIdxs.length) entryBlocks[workIdxs[0]].marker = "start";
+      if (end && workIdxs.length) entryBlocks[workIdxs[workIdxs.length - 1]].marker = "end";
+
+      entryBlocks.forEach(b => blocksByUid[e.uid].push(b));
     });
 
     const el = document.getElementById("teamActivityTimeline");
@@ -386,8 +396,16 @@
           const endTxt   = b.end ? melTimeShort(b.end) : "now";
           const durMs    = (b.end ? b.end.getTime() : Date.now()) - b.start.getTime();
           const durTxt   = b.kind === "work" ? fmtHours(durMs / 3_600_000) : Math.round(durMs / 60_000) + "m";
-          const label    = b.kind === "work" ? "Worked" : "On break";
-          const explanation = `${b.kind === "work" ? "worked" : "on break"} from ${startTxt} until ${endTxt}`;
+          const label    = b.kind === "brk"
+                          ? "On break"
+                          : b.marker === "start" ? "Shift started"
+                          : b.marker === "end"   ? "Shift ended"
+                          : "Worked";
+          const explanation = b.kind === "brk"
+                            ? `on break from ${startTxt} until ${endTxt}`
+                            : b.marker === "start" ? `clocked in at ${startTxt}, worked until ${endTxt}`
+                            : b.marker === "end"   ? `worked from ${startTxt}, clocked out at ${endTxt}`
+                            : `worked from ${startTxt} until ${endTxt}`;
           const cls      = b.kind === "work" ? "start" : "brk";
           const ongoing  = b.ongoing ? ` <span class="meta">· in progress</span>` : "";
           return `

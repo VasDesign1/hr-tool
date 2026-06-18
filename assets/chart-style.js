@@ -3,10 +3,12 @@
 
 import { fmtHours } from "./time.js";
 
-// Vibrant palette — one stable hue per contractor
+// Vibrant palette — one stable hue per contractor.
+// Order matches the dashboard "Today's activity" avatar colours so a contractor
+// has the same hue everywhere (avatars, charts, analytics).
 export const VIVID_PALETTE = [
-  "#3B82F6", // blue
   "#14B8A6", // teal
+  "#3B82F6", // blue
   "#EAB308", // yellow
   "#EF4444", // red
   "#8B5CF6", // purple
