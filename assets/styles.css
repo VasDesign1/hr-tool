@@ -670,7 +670,6 @@ table.data td .actions button { padding: 6px 11px; font-size: 12px; }
 body.viewer-mode .write-action,
 body.viewer-mode .actions,
 body.viewer-mode #addBtn,
-body.viewer-mode #bulkAccrueBtn,
 body.viewer-mode #requestLeaveBtn,
 body.viewer-mode #requestFixBtn,
 body.viewer-mode .toolbar > button:not([data-allow-viewer]),

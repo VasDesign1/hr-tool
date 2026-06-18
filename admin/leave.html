@@ -50,7 +50,6 @@
   <div class="card">
     <div class="toolbar">
       <h2>Balances</h2>
-      <button id="bulkAccrueBtn" class="ghost">+ Add this week's accrual to all</button>
     </div>
     <div id="balancesList" class="empty">Loading…</div>
   </div>
@@ -90,7 +89,7 @@
   import { renderCalendar } from "../assets/calendar.js";
   import { holidaysAsCalendarEntries } from "../assets/holidays.js";
   import {
-    collection, query, where, getDocs, doc, updateDoc, serverTimestamp, orderBy, onSnapshot, writeBatch
+    collection, query, where, getDocs, doc, updateDoc, serverTimestamp, orderBy, onSnapshot
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const { profile } = await requireRole(["admin", "viewer"]);
@@ -394,53 +393,6 @@
       }).join("")}</tbody>
     </table>`;
   }
-
-  // One-click bulk: add a week's worth of accrual (0.385 days ≈ 2.92h) to every active
-  // non-test contractor whose accrual has already started (start date ≤ this week's Monday).
-  // Contractors whose accrual starts in the future (e.g. Luis on 2026-07-01) are skipped.
-  document.getElementById("bulkAccrueBtn").addEventListener("click", async () => {
-    // Find Monday of the current Melbourne week
-    const todayKey = melDateKey();
-    const [ty, tm, td] = todayKey.split("-").map(Number);
-    const todayMs = Date.UTC(ty, tm - 1, td);
-    const dow = (new Date(todayMs).getUTCDay() + 6) % 7;
-    const monMs = todayMs - dow * 86_400_000;
-    const monDt = new Date(monMs);
-    const thisMondayKey = `${monDt.getUTCFullYear()}-${String(monDt.getUTCMonth()+1).padStart(2,"0")}-${String(monDt.getUTCDate()).padStart(2,"0")}`;
-
-    const eligible = Object.values(usersByUid).filter(u =>
-      u.active !== false &&
-      !u.testAccount &&
-      u.accrualStartDate &&
-      u.accrualStartDate <= thisMondayKey
-    );
-    const skipped = Object.values(usersByUid).filter(u =>
-      u.active !== false && !u.testAccount && (!u.accrualStartDate || u.accrualStartDate > thisMondayKey)
-    );
-
-    if (eligible.length === 0) {
-      alert("No contractors are eligible for this week's accrual (accrual either not started or starts in the future).");
-      return;
-    }
-    const names = eligible.map(u => u.name || u.email).join(", ");
-    const skipNames = skipped.length
-      ? `\n\nSkipped (accrual not started yet): ${skipped.map(u => u.name || u.email).join(", ")}`
-      : "";
-    if (!confirm(`Add 0.385 days (≈ 2.92h) of leave accrual to ${eligible.length} contractor(s)?\n\n${names}${skipNames}\n\nThis bumps each opening balance by one week. Use this as a manual one-off when end-of-week accrual needs to be applied regardless of timesheets.`)) return;
-    try {
-      const batch = writeBatch(db);
-      eligible.forEach(u => {
-        const current = u.openingBalanceDays || 0;
-        batch.update(doc(db, "users", u.uid), { openingBalanceDays: +(current + 0.385).toFixed(3) });
-      });
-      await batch.commit();
-      eligible.forEach(u => { u.openingBalanceDays = +((u.openingBalanceDays || 0) + 0.385).toFixed(3); });
-      loadBalances();
-      alert(`Added this week's accrual (0.385 days) to ${eligible.length} contractor(s).`);
-    } catch (ex) {
-      alert("Failed: " + (ex.message || ex.code));
-    }
-  });
 
   loadCalendar();
   startPendingLive();
