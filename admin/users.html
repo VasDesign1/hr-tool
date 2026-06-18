@@ -107,27 +107,30 @@
         <option value="viewer">Viewer (read-only admin panel)</option>
         <option value="admin">Admin (full access)</option>
       </select>
-      <div style="display:flex; gap:10px; margin-top:6px">
-        <div style="flex:1">
-          <label>Opening leave balance (days)</label>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:8px; align-items:end">
+        <div>
+          <label style="margin-bottom:0">Opening leave balance (days)</label>
           <input type="number" id="editOpeningBalance" min="0" step="0.01" placeholder="0">
         </div>
-        <div style="flex:1">
-          <label>Accrual start date <span class="muted" style="font-size:11px">(blank = no accrual)</span></label>
+        <div>
+          <label style="margin-bottom:0">Accrual start date</label>
           <input type="date" id="editAccrualStart">
         </div>
       </div>
-      <label style="display:flex; align-items:flex-start; gap:8px; margin-top:10px; font-size:13px; color:var(--text); font-weight:500; line-height:1.4">
-        <input type="checkbox" id="editAccrueAllWeeks" style="width:auto; margin-top:2px">
+      <div class="muted" style="font-size:11px; margin-top:6px">Leave the date blank for no accrual.</div>
+      <label style="display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:start; margin-top:14px; font-size:13px; color:var(--text); font-weight:500; line-height:1.4">
+        <input type="checkbox" id="editAccrueAllWeeks" style="width:auto; margin-top:3px">
         <span>
           Always accrue (don't check timesheets)
-          <span class="muted" style="font-size:11px; display:block; font-weight:400">Useful when older work history isn't tracked in this tool — accrues 2.92h per completed week from the start date no matter what.</span>
+          <span class="muted" style="font-size:11px; display:block; font-weight:400; margin-top:2px">Useful when older work history isn't tracked in this tool — accrues 2.92h per completed week from the start date no matter what.</span>
         </span>
       </label>
-      <label style="display:flex; align-items:center; gap:8px; margin-top:14px; font-size:14px; color:var(--text); font-weight:500">
-        <input type="checkbox" id="editTestAccount" style="width:auto">
-        Test account
-        <span class="muted" style="font-size:11px; font-weight:400">(hidden from team totals, charts and queues — but still visible to admin)</span>
+      <label style="display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:start; margin-top:14px; font-size:13px; color:var(--text); font-weight:500; line-height:1.4">
+        <input type="checkbox" id="editTestAccount" style="width:auto; margin-top:3px">
+        <span>
+          Test account
+          <span class="muted" style="font-size:11px; display:block; font-weight:400; margin-top:2px">Hidden from team totals, charts and queues — but still visible to admin.</span>
+        </span>
       </label>
       <div class="error" id="editErr"></div>
       <div class="actions">
