@@ -63,32 +63,32 @@
 
   <!-- Leave today + next 7 days -->
   <div class="card">
-    <div class="toolbar"><h2>Leave today &amp; next 7 days</h2><a href="leave.html" style="font-size:13px">Manage leave →</a></div>
+    <div class="toolbar"><h2>Leave today &amp; next 7 days<span class="live-dot" title="Live"></span></h2><a href="leave.html" style="font-size:13px">Manage leave →</a></div>
     <div id="leaveSoonList" class="empty">Loading…</div>
   </div>
 
   <!-- Live board -->
   <div class="card">
-    <div class="toolbar"><h2>Who's clocked in</h2><span class="muted" style="font-size:12px">Live</span></div>
+    <div class="toolbar"><h2>Who's clocked in<span class="live-dot" title="Live"></span></h2></div>
     <div id="liveList" class="empty">Loading…</div>
   </div>
 
   <!-- Recently auto-closed shifts (forgot to clock off) -->
   <div class="card" id="autoCloseCard" style="display:none">
-    <div class="toolbar"><h2>Recently auto-closed shifts</h2><span class="muted" style="font-size:12px">Contractor forgot to clock off — verify and edit if wrong</span></div>
+    <div class="toolbar"><h2>Recently auto-closed shifts<span class="live-dot" title="Live"></span></h2><span class="muted" style="font-size:12px">Contractor forgot to clock off — verify and edit if wrong</span></div>
     <div id="autoCloseList"></div>
   </div>
 
   <!-- Today's team activity timeline -->
   <div class="card">
-    <div class="toolbar"><h2>Today's activity</h2><span class="muted" style="font-size:12px">All contractor events · Melbourne</span></div>
+    <div class="toolbar"><h2>Today's activity<span class="live-dot" title="Live"></span></h2><span class="muted" style="font-size:12px">All contractor events · Melbourne</span></div>
     <div id="teamActivityTimeline" class="empty">Loading…</div>
   </div>
 
   <!-- Hours-this-week chart -->
   <div class="card">
     <div class="toolbar">
-      <h2>Hours this week</h2>
+      <h2>Hours this week<span class="live-dot" title="Live"></span></h2>
       <div class="row">
         <span class="muted" style="font-size:12px">per contractor</span>
         <span id="weekChartToggle"></span>
@@ -304,7 +304,18 @@
       options: vividChartOptions({ yLabel: "Hours", titleLookup: (idx) => fmtAUDow(weekKeys[idx]) })
     });
   }
-  loadWeekChart();
+  // Initial load + live re-render whenever this-week timeEntries change.
+  let __wkUnsub = null;
+  function subscribeWeekChart() {
+    if (__wkUnsub) __wkUnsub();
+    const monKey = startOfWeekKey();
+    __wkUnsub = onSnapshot(
+      query(collection(db, "timeEntries"), where("date", ">=", monKey)),
+      () => loadWeekChart().catch(e => console.error("week chart live:", e)),
+      (err) => console.error("week chart subscription:", err)
+    );
+  }
+  subscribeWeekChart();
 
   // ----- Today's team activity — one column per contractor side-by-side -----
   // Use the shared VIVID_PALETTE so avatar colours match every chart in the app.
@@ -423,8 +434,25 @@
       </div>`;
     }).join("")}</div>`;
   }
+  // Live activity: re-fire whenever today's timeEntries OR users docs change.
+  let __actUnsubA = null, __actUnsubB = null;
+  function subscribeTeamActivity() {
+    if (__actUnsubA) __actUnsubA();
+    if (__actUnsubB) __actUnsubB();
+    const todayKey = melDateKey();
+    __actUnsubA = onSnapshot(
+      query(collection(db, "timeEntries"), where("date", "==", todayKey)),
+      () => loadTeamActivity().catch(e => console.error("activity entries:", e)),
+      (err) => console.error("activity entries sub:", err)
+    );
+    __actUnsubB = onSnapshot(
+      query(collection(db, "users"), where("role", "==", "contractor")),
+      () => loadTeamActivity().catch(e => console.error("activity users:", e)),
+      (err) => console.error("activity users sub:", err)
+    );
+  }
   loadTeamActivity();
-  setInterval(loadTeamActivity, 60_000);
+  subscribeTeamActivity();
 
   // ----- Recently auto-closed shifts (last 7 days) -----
   async function loadAutoClosed() {
@@ -474,7 +502,18 @@
       }).join("")}</tbody>
     </table>`;
   }
+  // Live auto-closed shifts (last 7 days)
+  let __acUnsub = null;
+  function subscribeAutoClosed() {
+    if (__acUnsub) __acUnsub();
+    __acUnsub = onSnapshot(
+      query(collection(db, "timeEntries"), where("autoClosed", "==", true)),
+      () => loadAutoClosed().catch(e => console.error("auto-closed live:", e)),
+      (err) => console.error("auto-closed sub:", err)
+    );
+  }
   loadAutoClosed();
+  subscribeAutoClosed();
 
   // ----- Leave today + next 7 days -----
   async function loadLeaveSoon() {
@@ -523,7 +562,18 @@
       }).join("")}</tbody>
     </table>`;
   }
+  // Live leave-soon: subscribe to all approved/pending leave requests.
+  let __leaveSoonUnsub = null;
+  function subscribeLeaveSoon() {
+    if (__leaveSoonUnsub) __leaveSoonUnsub();
+    __leaveSoonUnsub = onSnapshot(
+      query(collection(db, "leaveRequests"), where("status", "in", ["approved", "pending"])),
+      () => loadLeaveSoon().catch(e => console.error("leave-soon live:", e)),
+      (err) => console.error("leave-soon sub:", err)
+    );
+  }
   loadLeaveSoon();
+  subscribeLeaveSoon();
 </script>
 <script type="module">
   // Shared chart defaults — luxury feel

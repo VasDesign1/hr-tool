@@ -41,7 +41,7 @@
   <!-- Period summary with charts -->
   <div class="card">
     <div class="toolbar">
-      <h2>Period summary</h2>
+      <h2>Period summary<span class="live-dot" title="Live"></span></h2>
       <div class="row">
         <span id="periodChartToggle"></span>
         <select id="periodPick" style="min-width:140px">
@@ -130,7 +130,7 @@
   import { renderAdminNav, escapeHtml } from "../assets/admin-nav.js";
   import { fmtHours, fmtDay, lastNDateKeys, melTimeShort, melDateKey, hoursBetween, MEL_TZ, fmtAU, fmtAUDow, fmtAUShort } from "../assets/time.js";
   import {
-    collection, query, where, getDocs, orderBy, doc, addDoc, updateDoc, deleteDoc, serverTimestamp, Timestamp
+    collection, query, where, getDocs, orderBy, doc, addDoc, updateDoc, deleteDoc, serverTimestamp, Timestamp, onSnapshot
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const { profile } = await requireRole("admin");
@@ -764,9 +764,22 @@
     periodToggle.dataset.wired = "1";
   }
   document.getElementById("periodPick").addEventListener("change", () => {
-    loadPeriodSummary().catch(e => { console.error("Period summary failed:", e); });
+    subscribePeriodSummary();
   });
-  loadPeriodSummary().catch(e => { console.error("Period summary failed:", e); });
+
+  // Live period summary — listener tracks the active period so it auto-re-renders on writes.
+  let __periodUnsub = null;
+  function subscribePeriodSummary() {
+    if (__periodUnsub) __periodUnsub();
+    const kind = document.getElementById("periodPick").value;
+    const { start } = periodRange(kind);
+    __periodUnsub = onSnapshot(
+      query(collection(db, "timeEntries"), where("date", ">=", start)),
+      () => loadPeriodSummary().catch(e => console.error("Period summary live:", e)),
+      (err) => console.error("Period summary sub:", err)
+    );
+  }
+  subscribePeriodSummary();
 
   // ===================================================================
   // INITIAL LOAD

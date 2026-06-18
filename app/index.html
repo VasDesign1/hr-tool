@@ -116,7 +116,7 @@
   <!-- Upcoming leave preview -->
   <div class="card">
     <div class="toolbar">
-      <h2>Upcoming leave</h2>
+      <h2>Upcoming leave<span class="live-dot" title="Live"></span></h2>
       <a href="leave.html" style="font-size:13px">Manage leave →</a>
     </div>
     <div id="upcomingLeave" class="empty">Loading…</div>
@@ -132,7 +132,7 @@
   import { computeBalance, fmtLeave } from "../assets/leave.js";
   import {
     collection, query, where, getDocs, addDoc, doc, getDoc, updateDoc,
-    serverTimestamp, Timestamp, arrayUnion
+    serverTimestamp, Timestamp, arrayUnion, onSnapshot
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const { user, profile } = await requireRole("contractor");
@@ -676,6 +676,19 @@
     }, 60_000);
   }
   init().catch(e => { console.error("Init failed:", e); alert("Dashboard failed to load: " + (e.message || e.code)); });
+
+  // Live: when this contractor's own timeEntries or leaveRequests change, refresh today + preview.
+  const todayKeyForSub = melDateKey();
+  onSnapshot(
+    query(collection(db, "timeEntries"), where("uid", "==", user.uid), where("date", "==", todayKeyForSub)),
+    () => refreshTodayMetrics().catch(e => console.error("live today:", e)),
+    (err) => console.error("today sub:", err)
+  );
+  onSnapshot(
+    query(collection(db, "leaveRequests"), where("uid", "==", user.uid)),
+    () => refreshLeavePreview().catch(e => console.error("live leave:", e)),
+    (err) => console.error("leave sub:", err)
+  );
 </script>
 </body>
 </html>
