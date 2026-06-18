@@ -271,7 +271,7 @@
       teSnap.forEach(d => timeEntries.push(d.data()));
       const approved = [];
       lrSnap.forEach(d => approved.push(d.data()));
-      const b = computeBalance(timeEntries, approved);
+      const b = computeBalance(timeEntries, approved, usersByUid[uid]);
       return { user: usersByUid[uid], ...b };
     }));
 

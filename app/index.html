@@ -469,7 +469,7 @@
         if (r.endDate >= todayKey) upcoming.push(r);
       }
     });
-    const { accrued, taken, balance } = computeBalance(timeEntries, approved);
+    const { accrued, taken, balance } = computeBalance(timeEntries, approved, profile);
     document.getElementById("statLeave").textContent = fmtLeave(balance);
     document.getElementById("statLeaveSub").textContent = `accrued ${fmtLeave(accrued)} · taken ${fmtLeave(taken)}`;
     document.getElementById("statPendingLeave").textContent = pending;

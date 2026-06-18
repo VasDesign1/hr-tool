@@ -167,7 +167,7 @@
       if (r.status === "approved") approved.push(r);
       if (r.status === "pending") pending++;
     });
-    const { accrued, taken, balance } = computeBalance(timeEntries, approved);
+    const { accrued, taken, balance } = computeBalance(timeEntries, approved, profile);
 
     document.getElementById("kpiBalance").textContent = fmtLeave(balance);
     document.getElementById("kpiAccrued").textContent = fmtLeave(accrued);
@@ -181,7 +181,10 @@
         <li>Taken<span class="right">${fmtLeave(taken)}</span></li>
         <li>Balance<span class="right">${fmtLeave(balance)}</span></li>
       </ul>`);
-    setTip("tipAccrued", `<span class="head">Accrual rate</span><span class="none">~2.92h per 38h week · capped at 152h/yr</span>`);
+    const accrualStartStr = profile.accrualStartDate
+      ? `Accruing from ${profile.accrualStartDate}`
+      : "Accrual not yet started — admin will set a start date";
+    setTip("tipAccrued", `<span class="head">Accrual</span><span class="none">~2.92h per worked week (20 days/yr ÷ 52). ${accrualStartStr}.</span>`);
 
     const takenList = approved.slice().sort((a, b) => b.startDate.localeCompare(a.startDate)).slice(0, 8);
     setTip("tipTaken", takenList.length
