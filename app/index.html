@@ -469,7 +469,7 @@
         if (r.endDate >= todayKey) upcoming.push(r);
       }
     });
-    const { accrued, taken, balance } = computeBalance(timeEntries, approved, profile);
+    const { opening, accrued, taken, balance } = computeBalance(timeEntries, approved, profile);
     document.getElementById("statLeave").textContent = fmtLeave(balance);
     document.getElementById("statLeaveSub").textContent = `accrued ${fmtLeave(accrued)} · taken ${fmtLeave(taken)}`;
     document.getElementById("statPendingLeave").textContent = pending;
@@ -483,9 +483,17 @@
         const range = r.startDate === r.endDate ? fmtDay(r.startDate) : `${fmtDay(r.startDate)} → ${fmtDay(r.endDate)}`;
         return `<li>${range}<span class="right">${fmtLeave(r.hours)}</span></li>`;
       });
+    const accrualStartLabel = profile.accrualStartDate
+      ? ` <span style="color:#94A3B8; font-size:10px; font-weight:400">(from ${profile.accrualStartDate.split("-").reverse().join("/")})</span>`
+      : "";
+    const summaryRows = `
+      <li>Opening balance${accrualStartLabel}<span class="right">${fmtLeave(opening)}</span></li>
+      <li>Accrued<span class="right">${fmtLeave(accrued)}</span></li>
+      <li>Taken<span class="right">${fmtLeave(taken)}</span></li>
+      <li>Balance<span class="right">${fmtLeave(balance)}</span></li>`;
     setTip("tipLeave", takenRows.length
-      ? `<span class="head">Leave taken</span><ul>${takenRows.join("")}</ul>`
-      : `<span class="head">Leave taken</span><span class="none">None yet.</span>`);
+      ? `<span class="head">Leave balance</span><ul>${summaryRows}</ul><span class="head" style="margin-top:8px">Recent leave</span><ul>${takenRows.join("")}</ul>`
+      : `<span class="head">Leave balance</span><ul>${summaryRows}</ul>`);
 
     const pendingRows = allRequests
       .filter(r => r.status === "pending")
