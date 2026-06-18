@@ -686,6 +686,8 @@
 
     const active = users.filter(u => u.active !== false);
 
+    const todayKey = melDateKey();
+    const nowMs = Date.now();
     const perUserDaily = await Promise.all(active.map(async (u) => {
       const teSnap = await getDocs(query(collection(db, "timeEntries"), where("uid", "==", u.uid)));
       const workMap = Object.fromEntries(keys.map(k => [k, 0]));
@@ -693,9 +695,29 @@
       let total = 0, breakTotal = 0;
       teSnap.forEach(d => {
         const e = d.data();
-        if (e.date >= start && e.date <= end) {
-          if (e.hoursWorked) { workMap[e.date] = (workMap[e.date] || 0) + e.hoursWorked; total += e.hoursWorked; }
+        if (e.date < start || e.date > end) return;
+        // Closed shifts: use stored hoursWorked + breakMinutes
+        if (e.clockOutUTC && e.hoursWorked != null) {
+          workMap[e.date] = (workMap[e.date] || 0) + e.hoursWorked;
+          total += e.hoursWorked;
           if (e.breakMinutes) { breakMap[e.date] = (breakMap[e.date] || 0) + e.breakMinutes / 60; breakTotal += e.breakMinutes / 60; }
+          return;
+        }
+        // Open shifts (today only): compute live hours from clockIn → now (or current break-start)
+        if (!e.clockOutUTC && e.date === todayKey && e.clockInUTC?.toDate) {
+          const startMs = e.clockInUTC.toDate().getTime();
+          const breakMins = e.breakMinutes || 0;
+          // Subtract in-progress break too (lookup user.currentBreakStartAt)
+          let currentBreakMs = 0;
+          if (u.currentEntryId === d.id && u.currentBreakStartAt?.toDate) {
+            currentBreakMs = nowMs - u.currentBreakStartAt.toDate().getTime();
+          }
+          const liveWorkH = Math.max(0, (nowMs - startMs - breakMins * 60_000 - currentBreakMs) / 3_600_000);
+          const liveBreakH = (breakMins * 60_000 + currentBreakMs) / 3_600_000;
+          workMap[e.date] = (workMap[e.date] || 0) + liveWorkH;
+          total += liveWorkH;
+          breakMap[e.date] = (breakMap[e.date] || 0) + liveBreakH;
+          breakTotal += liveBreakH;
         }
       });
       return { user: u, workMap, breakMap, total, breakTotal };

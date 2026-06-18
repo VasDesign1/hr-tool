@@ -370,10 +370,11 @@
           <div class="avatar" style="background:${c}">${initials}</div>
           <div class="name">${escapeHtml(u.name || u.email)}</div>
         </div>`;
+      const colCls = u.testAccount ? "activity-col is-test" : "activity-col";
       if (blocks.length === 0) {
-        return `<div class="activity-col">${headerHtml}<div class="empty-state">No activity today.</div></div>`;
+        return `<div class="${colCls}">${headerHtml}<div class="empty-state">No activity today.</div></div>`;
       }
-      return `<div class="activity-col">
+      return `<div class="${colCls}">
         ${headerHtml}
         <div class="timeline">${blocks.map(b => {
           const startTxt = melTimeShort(b.start);

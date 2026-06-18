@@ -89,6 +89,13 @@ export function vividPieOptions({ isCount = false } = {}) {
   };
 }
 
+// True when there is no plottable data — used to show a fallback message instead of an empty pie.
+export function isEmptyData(barData) {
+  if (!barData?.datasets?.length) return true;
+  const total = barData.datasets.reduce((s, ds) => s + ds.data.reduce((a, v) => a + (v || 0), 0), 0);
+  return total <= 0.0001;
+}
+
 // Tiny pill toggle UI for switching a chart between bar/pie.
 // Returns the toolbar element you can insert anywhere in the page.
 export function makeChartToggle(initialType = "bar", onChange) {

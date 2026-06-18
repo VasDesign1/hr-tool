@@ -333,8 +333,21 @@ a:hover { text-decoration: underline; }
   letter-spacing: .04em;
 }
 .tile-tip ul { margin: 0; padding: 0; list-style: none; }
-.tile-tip li { padding: 3px 0; color: #E2E8F0; display: flex; justify-content: space-between; gap: 10px; }
-.tile-tip li .right { color: #94A3B8; font-variant-numeric: tabular-nums; }
+.tile-tip li {
+  padding: 4px 0;
+  color: #E2E8F0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 14px;
+  align-items: baseline;
+}
+.tile-tip li > :first-child { white-space: normal; word-break: break-word; }
+.tile-tip li .right {
+  color: #94A3B8;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-align: right;
+}
 .tile-tip .none { color: #94A3B8; font-style: italic; }
 
 /* Floating tooltip for calendar entries — follows the cursor */
@@ -391,15 +404,24 @@ canvas.chart-vivid { width: 100% !important; }
 /* Per-user activity grid — side-by-side columns on the admin dashboard */
 .activity-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
 }
 .activity-col {
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--r);
   padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  min-height: 180px;
+}
+.activity-col.is-test { border-color: #C7D2FE; background: #F8FAFF; }
+.activity-col.is-test .activity-col-header::after {
+  content: "TEST"; font-size: 9.5px; font-weight: 700; letter-spacing: .08em;
+  color: #4338CA; background: #EEF2FF; border: 1px solid #C7D2FE;
+  padding: 2px 6px; border-radius: 4px; margin-left: 6px;
 }
 .activity-col-header {
   display: flex; align-items: center; gap: 10px;
@@ -981,13 +1003,18 @@ a.name-link:hover { text-decoration: underline; }
 
 .live-list { display: grid; gap: 10px; }
 .live-row {
-  display: flex; justify-content: space-between; align-items: center;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 14px;
   padding: 12px 16px;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--r);
+  position: relative;
 }
-.live-row .who { display: flex; align-items: center; gap: 12px; }
+.live-row .who { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.live-row .who > div { min-width: 0; }
 .live-row .avatar {
   width: 36px; height: 36px;
   border-radius: 50%;
@@ -995,10 +1022,38 @@ a.name-link:hover { text-decoration: underline; }
   color: var(--brand-2);
   display: grid; place-items: center;
   font-weight: 700; font-size: 13px;
+  flex-shrink: 0;
 }
-.live-row .name { font-weight: 600; font-size: 14px; }
+.live-row .name {
+  font-weight: 600; font-size: 14px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .live-row .since { color: var(--muted); font-size: 12.5px; }
-.live-row .elapsed { color: var(--brand); font-weight: 700; font-variant-numeric: tabular-nums; font-size: 16px; }
+.live-row .elapsed { color: var(--brand); font-weight: 700; font-variant-numeric: tabular-nums; font-size: 16px; min-width: 88px; text-align: right; }
+
+/* Hover detail tooltip on a live-board row */
+.live-row .row-tip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 14px;
+  background: var(--text);
+  color: white;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity .12s, transform .12s;
+  z-index: 30;
+  box-shadow: var(--shadow-lg);
+  text-align: left;
+}
+.live-row:hover .row-tip { opacity: 1; transform: translateY(0); }
+.live-row .row-tip strong { font-weight: 600; display: block; margin-bottom: 4px; }
+.live-row .row-tip .muted { color: #94A3B8; }
 
 /* ============================================================
    MOBILE
