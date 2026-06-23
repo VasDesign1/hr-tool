@@ -133,6 +133,7 @@
   import { getInitials, escapeHtml, roleBadgesHtml } from "../assets/admin-nav.js";
   import { refreshContractorBadges } from "../assets/contractor-nav.js";
   import { mountAnnouncementBanners } from "../assets/announcements.js";
+  import { logAudit } from "../assets/audit.js";
   import { melClock, localClock, melDateKey, melTimeShort, fmtHours, fmtDay, fmtDateShort, parseMelTime, MEL_TZ } from "../assets/time.js";
   import { computeBalance, fmtLeave } from "../assets/leave.js";
   import {
@@ -584,6 +585,7 @@
     const workMs = closeMs - clockInDate.getTime() - breakMinsField * 60_000;
     const hoursWorked = Math.max(0, workMs / 3_600_000);
 
+    const autoCloseNote = `Auto-closed at ${WORK_WINDOW_END} Mel because contractor didn't clock off.`;
     await updateDoc(doc(db, "timeEntries", currentEntryId), {
       clockOutUTC: Timestamp.fromDate(closeAt),
       hoursWorked,
@@ -591,13 +593,26 @@
       breakMinutes: breakMinsField,
       autoClosed: true,
       autoClosedAt: serverTimestamp(),
-      autoCloseNote: `Auto-closed at ${WORK_WINDOW_END} Mel because contractor didn't clock off.`,
+      autoCloseNote,
       source: "auto"
     });
     await updateDoc(doc(db, "users", user.uid), {
       currentEntryId: null,
       clockedInAt: null,
       currentBreakStartAt: null
+    });
+    logAudit({ profile, user }, {
+      action: "timeEntry.autoClose",
+      targetType: "timeEntry",
+      targetId: currentEntryId,
+      targetUser: user.uid,
+      after: {
+        clockOut: melTimeShort(closeAt),
+        date: melDateKey(clockInDate),
+        hoursWorked: Number(hoursWorked.toFixed(2)),
+        breakMinutes: Math.round(breakMinsField)
+      },
+      note: autoCloseNote
     });
 
     // Clear local state so the rest of init treats us as clocked-out
