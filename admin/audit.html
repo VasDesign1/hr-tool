@@ -100,7 +100,7 @@
         const actorRole = e.who?.role ? ` <span class="muted" style="font-size:11px">(${e.who.role})</span>` : "";
         const targetUserDoc = e.targetUser ? usersByUid[e.targetUser] : null;
         const targetName = targetUserDoc ? (targetUserDoc.name || targetUserDoc.email) : (e.targetUser || "—");
-        const note = [e.note, e.targetId ? `id: ${e.targetId.slice(0, 8)}…` : ""].filter(Boolean).join(" · ");
+        const note = e.note || "";
         const diff = e.before || e.after
           ? `<details style="margin-top:4px"><summary class="muted" style="font-size:11px; cursor:pointer">Show diff</summary>
               <pre style="font-size:11px; background:var(--surface-3); padding:8px; border-radius:6px; margin-top:4px; white-space:pre-wrap; word-break:break-word">${escapeHtml(JSON.stringify({ before: e.before, after: e.after }, null, 2))}</pre>

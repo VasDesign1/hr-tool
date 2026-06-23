@@ -28,6 +28,8 @@ export function mountAnnouncementBanners(user, profile) {
     const items = [];
     snap.forEach(d => {
       const a = { id: d.id, ...d.data() };
+      // Skip paused — admin keeps the record but contractors don't see it
+      if (a.paused) return;
       // Filter active (started + not expired)
       const startsAt  = a.startAt?.toMillis?.()  ?? 0;
       const expiresAt = a.expiresAt?.toMillis?.() ?? Infinity;

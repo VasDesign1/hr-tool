@@ -129,11 +129,12 @@
   import { db } from "../assets/firebase-init.js";
   import { requireRole } from "../assets/auth-router.js";
   import { renderAdminNav, escapeHtml, getInitials } from "../assets/admin-nav.js";
+  import { logAudit } from "../assets/audit.js";
   import { melTimeShort, fmtHours, melDateKey, fmtDateShort, fmtDay, fmtAU, fmtAUDow, fmtAUShort } from "../assets/time.js";
   import { fmtLeave } from "../assets/leave.js";
   import { collection, query, where, getDocs, getDoc, doc, onSnapshot, addDoc, updateDoc, deleteDoc, serverTimestamp, Timestamp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
-  const { profile } = await requireRole(["admin", "viewer"]);
+  const { user, profile } = await requireRole(["admin", "viewer"]);
   if (profile.role === "viewer") document.body.classList.add("viewer-mode");
   renderAdminNav(profile, "dashboard");
 
@@ -597,14 +598,16 @@
       const expiresAt = expiresStr
         ? Timestamp.fromMillis(new Date(expiresStr + "T23:59:59").getTime())
         : null;
-      await addDoc(collection(db, "announcements"), {
+      const ref = await addDoc(collection(db, "announcements"), {
         message: msg,
         severity,
+        paused: false,
         startAt: serverTimestamp(),
         expiresAt,
         createdBy: profile.email,
         createdAt: serverTimestamp()
       });
+      logAudit({ profile, user }, { action: "announcement.post", targetType: "announcement", targetId: ref.id, after: { message: msg, severity, expiresAt: expiresStr || null }, note: msg });
       annForm.reset();
     } catch (ex) { alert("Failed: " + (ex.message || ex.code)); }
     finally { btn.disabled = false; btn.textContent = "Post"; }
@@ -621,25 +624,53 @@
       <tbody>${items.map(a => {
         const expiresMs = a.expiresAt?.toMillis?.() ?? Infinity;
         const startsMs  = a.startAt?.toMillis?.() ?? 0;
-        const status = nowMs > expiresMs ? `<span class="badge off">Expired</span>`
-                     : nowMs < startsMs  ? `<span class="badge pending">Pending</span>`
+        const isPaused  = !!a.paused;
+        const isExpired = nowMs > expiresMs;
+        const isPending = nowMs < startsMs;
+        const status = isPaused  ? `<span class="badge off">Paused</span>`
+                     : isExpired ? `<span class="badge off">Expired</span>`
+                     : isPending ? `<span class="badge pending">Pending</span>`
                      : `<span class="badge ok">Active</span>`;
         const posted = a.createdAt?.toDate?.()?.toLocaleString("en-AU", { timeZone: "Australia/Melbourne", hour12: false }) || "—";
         const expires = a.expiresAt?.toDate?.()?.toLocaleDateString("en-AU", { day: "2-digit", month: "2-digit", year: "numeric" }) || "—";
-        return `<tr>
+        const pauseLabel = isPaused ? "Resume" : "Pause";
+        return `<tr${isPaused ? ' style="opacity:.7"' : ""}>
           <td>${escapeHtml(a.message)}</td>
           <td><span class="badge ${a.severity === "alert" ? "bad" : a.severity === "warn" ? "pending" : "ok"}">${(a.severity || "info").toUpperCase()}</span></td>
           <td class="muted" style="font-size:12px">${posted}</td>
           <td class="muted" style="font-size:12px">${expires}</td>
           <td>${status}</td>
-          <td><div class="actions"><button class="ghost danger" data-ann-delete="${a.id}">Delete</button></div></td>
+          <td><div class="actions">
+            <button class="ghost" data-ann-pause="${a.id}" data-paused="${isPaused ? 1 : 0}">${pauseLabel}</button>
+            <button class="ghost danger" data-ann-delete="${a.id}" title="Permanently remove (history will be lost). Pause is usually what you want.">Delete</button>
+          </div></td>
         </tr>`;
       }).join("")}</tbody>
     </table>`;
+    annList.querySelectorAll("button[data-ann-pause]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.annPause;
+        const wasPaused = btn.dataset.paused === "1";
+        const a = items.find(x => x.id === id);
+        try {
+          await updateDoc(doc(db, "announcements", id), { paused: !wasPaused });
+          logAudit({ profile, user }, {
+            action: wasPaused ? "announcement.resume" : "announcement.pause",
+            targetType: "announcement", targetId: id,
+            note: a?.message || ""
+          });
+        } catch (e) { alert("Failed: " + (e.message || e.code)); }
+      });
+    });
     annList.querySelectorAll("button[data-ann-delete]").forEach(btn => {
       btn.addEventListener("click", async () => {
-        if (!confirm("Delete this announcement?")) return;
-        try { await deleteDoc(doc(db, "announcements", btn.dataset.annDelete)); }
+        const id = btn.dataset.annDelete;
+        const a = items.find(x => x.id === id);
+        if (!confirm("Permanently delete this announcement?\n\nThe record will be lost. Use Pause if you just want to hide it from contractors.")) return;
+        try {
+          await deleteDoc(doc(db, "announcements", id));
+          logAudit({ profile, user }, { action: "announcement.delete", targetType: "announcement", targetId: id, before: { message: a?.message, severity: a?.severity }, note: a?.message || "" });
+        }
         catch (e) { alert("Failed: " + (e.message || e.code)); }
       });
     });
