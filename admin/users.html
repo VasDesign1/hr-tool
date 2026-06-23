@@ -255,6 +255,7 @@
       if (!confirm(`Force ${data.name} to set a new password on next login?\n\nThey'll still need their current password to sign in. After signing in they'll be sent straight to the "set new password" screen.`)) return;
       try {
         await updateDoc(doc(db, "users", data.uid), { mustChangePassword: true });
+        logAudit({ profile }, { action: "user.forcePwChange", targetType: "user", targetId: data.uid, targetUser: data.uid, note: `Forced ${data.name} to set a new password on next login` });
         alert("Done — they'll set a new password next time they sign in.");
         loadUsers();
       } catch (e) { alert("Failed: " + e.message); }
@@ -263,9 +264,11 @@
     } else if (act === "deactivate") {
       if (!confirm("Deactivate this user? They'll be blocked from signing in until reactivated.")) return;
       await updateDoc(doc(db, "users", data.uid), { active: false });
+      logAudit({ profile }, { action: "user.deactivate", targetType: "user", targetId: data.uid, targetUser: data.uid, note: `Deactivated ${data.name}` });
       loadUsers();
     } else if (act === "activate") {
       await updateDoc(doc(db, "users", data.uid), { active: true });
+      logAudit({ profile }, { action: "user.activate", targetType: "user", targetId: data.uid, targetUser: data.uid, note: `Reactivated ${data.name}` });
       loadUsers();
     }
   }
@@ -314,6 +317,7 @@
         createdAt: serverTimestamp(),
         createdBy: profile.email
       });
+      logAudit({ profile }, { action: "user.create", targetType: "user", targetId: newUid, targetUser: newUid, after: { name, email, role }, note: `Created user ${name} (${email})` });
 
       document.getElementById("addModal").classList.remove("open");
       document.getElementById("tpEmail").textContent = email;
