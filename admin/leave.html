@@ -128,9 +128,33 @@
   renderAdminNav(profile, "leave");
 
   let pendingChatUnsubs = []; // per-request comment subs (refreshed on every renderPending)
+  let upcomingChatUnsubs = [];
+  let historyChatUnsubs = [];
   let activeThreadUnsub = null; // single thread sub used while review modal is open
   let openReviewReqId = null;
   let openReviewReq = null;
+
+  // Helper: subscribe to comment counts for a set of request rows in a given table.
+  // Each row must have <span class="comment-badge" data-chat="ID"><span data-count="ID"></span></span>.
+  function wireChatBadges(scopeEl, reqs, myUid) {
+    return reqs.map(r => subscribeToComments(r.id, (items) => {
+      const el = scopeEl.querySelector(`[data-count="${r.id}"]`);
+      if (!el) return;
+      el.textContent = items.length;
+      const badge = el.closest(".comment-badge");
+      if (!badge) return;
+      const hasNew = items.some(c => c.byUid && c.byUid !== myUid && c.byRole !== "admin" && c.byRole !== "viewer");
+      badge.classList.toggle("unread", items.length > 0 && hasNew);
+    }));
+  }
+  function attachChatClick(scopeEl, reqs) {
+    scopeEl.querySelectorAll("span[data-chat]").forEach(el => {
+      el.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        openReview(el.dataset.chat, reqs.find(r => r.id === el.dataset.chat));
+      });
+    });
+  }
 
   // ---- Load contractors once ----
   const usnap = await getDocs(query(collection(db, "users"), where("role", "==", "contractor")));
@@ -198,22 +222,9 @@
     listEl.querySelectorAll("button[data-act]").forEach(btn => {
       btn.addEventListener("click", () => openReview(btn.dataset.id, reqs.find(r => r.id === btn.dataset.id)));
     });
-    listEl.querySelectorAll("span[data-chat]").forEach(el => {
-      el.addEventListener("click", () => openReview(el.dataset.chat, reqs.find(r => r.id === el.dataset.chat)));
-    });
-
-    // Subscribe to comment counts for each pending request (live).
+    attachChatClick(listEl, reqs);
     pendingChatUnsubs.forEach(fn => fn?.());
-    pendingChatUnsubs = reqs.map(r => subscribeToComments(r.id, (items) => {
-      const el = document.querySelector(`[data-count="${r.id}"]`);
-      if (!el) return;
-      el.textContent = items.length;
-      const badge = el.closest(".comment-badge");
-      if (!badge) return;
-      const hasAny = items.length > 0;
-      const hasNew = items.some(c => c.byUid && c.byUid !== user.uid && c.byRole !== "admin");
-      badge.classList.toggle("unread", hasAny && hasNew);
-    }));
+    pendingChatUnsubs = wireChatBadges(listEl, reqs, user.uid);
   }
 
   // ---- Review / decision modal ----
@@ -355,7 +366,7 @@
     }
     listEl.classList.remove("empty");
     listEl.innerHTML = `<table class="data">
-      <thead><tr><th>Contractor</th><th>Dates</th><th>Hours</th><th>Reason</th></tr></thead>
+      <thead><tr><th>Contractor</th><th>Dates</th><th>Hours</th><th>Reason</th><th>Chat</th></tr></thead>
       <tbody>
         ${upcoming.map(r => {
           const u = usersByUid[r.uid];
@@ -367,10 +378,14 @@
             <td>${range}</td>
             <td>${fmtLeave(r.hours)}</td>
             <td class="muted" style="font-size:13px">${escapeHtml(r.reason || "—")}</td>
+            <td><span class="comment-badge" data-chat="${r.id}" title="Open conversation">💬 <span data-count="${r.id}">…</span></span></td>
           </tr>`;
         }).join("")}
       </tbody>
     </table>`;
+    attachChatClick(listEl, upcoming);
+    upcomingChatUnsubs.forEach(fn => fn?.());
+    upcomingChatUnsubs = wireChatBadges(listEl, upcoming, user.uid);
   }
 
   // ---- Balances (per contractor) ----
@@ -479,6 +494,7 @@
         <th>Submitted</th>
         <th>Decided</th>
         <th>Reason / note</th>
+        <th>Chat</th>
       </tr></thead>
       <tbody>${reqs.map(r => {
         const u = usersByUid[r.uid];
@@ -504,9 +520,13 @@
           <td class="muted" style="font-size:12px">${submitted}</td>
           <td class="muted" style="font-size:12px">${decidedTxt}</td>
           <td>${reasonHtml}${noteHtml}</td>
+          <td><span class="comment-badge" data-chat="${r.id}" title="Open conversation">💬 <span data-count="${r.id}">…</span></span></td>
         </tr>`;
       }).join("")}</tbody>
     </table>`;
+    attachChatClick(listEl, reqs);
+    historyChatUnsubs.forEach(fn => fn?.());
+    historyChatUnsubs = wireChatBadges(listEl, reqs, user.uid);
   }
 
   // Populate ledger user picker (real contractors only)
