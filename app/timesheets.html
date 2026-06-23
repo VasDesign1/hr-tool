@@ -260,10 +260,12 @@
     const ordered = [...keys].reverse();
     const dailyData = {};
     const breakData = {};
-    ordered.forEach(k => { dailyData[k] = 0; breakData[k] = 0; });
+    const sessionsPerDay = {};
+    ordered.forEach(k => { dailyData[k] = 0; breakData[k] = 0; sessionsPerDay[k] = 0; });
     inRange.forEach(e => {
       if (e.hoursWorked && dailyData[e.date] !== undefined) dailyData[e.date] += e.hoursWorked;
       if (e.breakMinutes && breakData[e.date] !== undefined) breakData[e.date] += e.breakMinutes / 60;
+      if (sessionsPerDay[e.date] !== undefined) sessionsPerDay[e.date]++;
     });
     const barW = n > 90 ? 5 : n > 30 ? 10 : 16;
     const workedTotal = Object.values(dailyData).reduce((s, v) => s + v, 0);
@@ -283,6 +285,17 @@
       ]
     };
     const dailyBarOpts = vividChartOptions({ yLabel: "Hours", titleLookup: (idx) => fmtAUDow(ordered[idx]) });
+    // Footer adds session + break context per bar
+    dailyBarOpts.plugins.tooltip.callbacks.footer = (items) => {
+      const idx = items[0].dataIndex;
+      const k = ordered[idx];
+      const ses = sessionsPerDay[k] || 0;
+      const brkMin = Math.round((breakData[k] || 0) * 60);
+      const parts = [];
+      if (ses > 0) parts.push(`${ses} session${ses === 1 ? "" : "s"}`);
+      if (brkMin > 0) parts.push(`Break: ${fmtMinutes(brkMin)}`);
+      return parts.length ? parts.join("  ·  ") : "";
+    };
     function renderDaily(type) {
       if (chartRef) chartRef.destroy();
       chartRef = new Chart(document.getElementById("dailyChart"), type === "pie"
@@ -342,27 +355,56 @@
     const end   = e.clockOutUTC?.toDate?.();
     if (!start) return out;
     const breaks = (e.breaks || [])
-      .map(b => ({ start: b.startUTC?.toDate?.(), end: b.endUTC?.toDate?.() }))
+      .map(b => ({ start: b.startUTC?.toDate?.(), end: b.endUTC?.toDate?.(), autoClosed: b.autoClosed }))
       .filter(b => b.start && b.end)
       .sort((a, b) => a.start - b.start);
     let cursor = start;
     breaks.forEach(b => {
-      if (b.start > cursor) out.push({ kind: "work", start: cursor, end: b.start });
-      out.push({ kind: "brk", start: b.start, end: b.end });
+      if (b.start > cursor) out.push({ kind: "work", start: cursor, end: b.start, entry: e });
+      out.push({ kind: "brk", start: b.start, end: b.end, entry: e, autoClosed: b.autoClosed });
       cursor = b.end;
     });
     if (end) {
-      if (end > cursor) out.push({ kind: "work", start: cursor, end });
+      if (end > cursor) out.push({ kind: "work", start: cursor, end, entry: e });
     } else {
-      out.push({ kind: "work", start: cursor, end: null, ongoing: true });
+      out.push({ kind: "work", start: cursor, end: null, ongoing: true, entry: e });
     }
     return out;
   }
 
+  function segmentTitle(s) {
+    const e = s.entry || {};
+    const sourceLabel = e.source === "auto"  ? "Auto-closed"
+                      : e.source === "admin" ? "Set by admin"
+                      : "Logged by you";
+    const lastEd = e.lastEditedAt?.toDate?.()?.toLocaleString("en-AU", { timeZone: "Australia/Melbourne", hour12: false });
+    const lastBy = e.lastEditedBy || e.editedBy || "";
+    const lines = [];
+    if (s.kind === "brk") {
+      const dur = Math.round((s.end - s.start) / 60_000);
+      lines.push(`Break · ${dur} min`);
+      lines.push(`${melTimeShort(s.start)} → ${melTimeShort(s.end)}`);
+      if (s.autoClosed) lines.push("Break auto-closed when shift was auto-closed.");
+    } else if (s.ongoing) {
+      lines.push("Still in — no clock-off yet");
+      lines.push(`Started ${melTimeShort(s.start)}`);
+    } else {
+      const dur = hoursBetween(s.start.getTime(), s.end.getTime());
+      lines.push(`Work · ${fmtHours(dur)}`);
+      lines.push(`${melTimeShort(s.start)} → ${melTimeShort(s.end)}`);
+    }
+    lines.push(`Source: ${sourceLabel}`);
+    if (lastEd) lines.push(`Last edited: ${lastEd}${lastBy ? " by " + lastBy : ""}`);
+    if (e.autoCloseNote) lines.push(`Note: ${e.autoCloseNote}`);
+    if (e.editNote) lines.push(`Edit note: ${e.editNote}`);
+    return lines.join("\n");
+  }
+
   function chipHtml(s) {
+    const ttl = segmentTitle(s).replace(/"/g, "&quot;");
     if (s.kind === "brk") {
       const dur = (s.end - s.start) / 60_000;
-      return `<span class="session-chip brk">
+      return `<span class="session-chip brk" title="${ttl}">
         <span>${melTimeShort(s.start)}</span>
         <span class="arr">→</span>
         <span>${melTimeShort(s.end)}</span>
@@ -370,14 +412,14 @@
       </span>`;
     }
     if (s.ongoing) {
-      return `<span class="session-chip open">
+      return `<span class="session-chip open" title="${ttl}">
         <span>${melTimeShort(s.start)}</span>
         <span class="arr">→</span>
         <span class="to">still in</span>
       </span>`;
     }
     const dur = hoursBetween(s.start.getTime(), s.end.getTime());
-    return `<span class="session-chip">
+    return `<span class="session-chip" title="${ttl}">
       <span>${melTimeShort(s.start)}</span>
       <span class="arr">→</span>
       <span>${melTimeShort(s.end)}</span>

@@ -122,14 +122,22 @@ export function renderCalendar(container, opts) {
     tipEl.className = "float-tip";
     document.body.appendChild(tipEl);
   }
+  const STATUS_CLASSES = ["pending", "approved", "denied", "cancelled", "holiday"];
   container.querySelectorAll(".cal-entry").forEach(el => {
     const tooltip = el.getAttribute("title");
     if (!tooltip) return;
     // suppress native browser tooltip
     el.removeAttribute("title");
     el.dataset.tip = tooltip;
+    const status = STATUS_CLASSES.find(s => el.classList.contains(s)) || "";
     el.addEventListener("mouseenter", () => {
-      tipEl.textContent = el.dataset.tip;
+      const lines = el.dataset.tip.split("\n");
+      const head = lines.shift() || "";
+      const body = lines.join("\n");
+      tipEl.innerHTML = `<div class="tip-head">${escapeHtml(head)}</div>` +
+                        (body ? `<div class="tip-body">${escapeHtml(body).replace(/\n/g, "<br>")}</div>` : "");
+      STATUS_CLASSES.forEach(s => tipEl.classList.remove("stat-" + s));
+      if (status) tipEl.classList.add("stat-" + status);
       tipEl.classList.add("open");
     });
     el.addEventListener("mousemove", (ev) => {

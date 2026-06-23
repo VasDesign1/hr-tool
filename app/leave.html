@@ -105,6 +105,27 @@
   </div>
 </div>
 
+<!-- Conversation modal -->
+<div class="modal-backdrop" id="commentsModal">
+  <div class="modal wide">
+    <h2>Conversation</h2>
+    <div id="commentsHeader" style="margin-bottom:12px; font-size:14px"></div>
+    <div class="thread-section" style="margin-top:0; padding-top:0; border-top:0">
+      <div id="commentsList"><div class="thread-empty">Loading…</div></div>
+      <div class="thread-compose">
+        <textarea id="commentsInput" rows="2" placeholder="Ask a question or add context for the admin…"></textarea>
+        <div class="row">
+          <button type="button" class="ghost" id="commentsPostBtn">Post comment</button>
+        </div>
+        <div class="error" id="commentsErr"></div>
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" class="ghost" id="commentsCloseBtn">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- Request leave modal -->
 <div class="modal-backdrop" id="leaveModal">
   <div class="modal">
@@ -140,8 +161,10 @@
   import { getInitials, escapeHtml, roleBadgesHtml } from "../assets/admin-nav.js";
   import { refreshContractorBadges } from "../assets/contractor-nav.js";
   import { mountAnnouncementBanners } from "../assets/announcements.js";
+  import { subscribeToComments, addLeaveComment, renderCommentsThread } from "../assets/leave-comments.js";
+  import { logAudit } from "../assets/audit.js";
   import { fmtDay, melDateKey, fmtDateShort, fmtAU } from "../assets/time.js";
-  import { leaveHoursFor, computeBalance, fmtLeave } from "../assets/leave.js";
+  import { leaveHoursFor, computeBalance, fmtLeave, WEEKLY_ACCRUAL_HOURS } from "../assets/leave.js";
   import { renderCalendar } from "../assets/calendar.js";
   import { holidaysAsCalendarEntries, publicHolidaysInRange, holidayName } from "../assets/holidays.js";
   import {
@@ -155,6 +178,11 @@
   const __bb = document.getElementById("brandBadges");
   if (__bb) __bb.innerHTML = roleBadgesHtml(profile);
   mountAnnouncementBanners(user, profile);
+
+  let rowChatUnsubs = []; // per-request comment subs (refreshed every refresh())
+  let activeThreadUnsub = null;
+  let openCommentsReqId = null;
+  let openCommentsReq  = null;
 
   async function refresh() {
     const [teSnap, lrSnap] = await Promise.all([
@@ -188,9 +216,26 @@
         <li><span>Balance</span><span class="right">${fmtLeave(balance)}</span></li>
       </ul>`);
     const accrualStartStr = profile.accrualStartDate
-      ? `Accruing from ${profile.accrualStartDate}`
+      ? `Accruing from ${fmtAU(profile.accrualStartDate)}`
       : "Accrual not yet started — admin will set a start date";
-    setTip("tipAccrued", `<span class="head">Accrual</span><span class="none">~2.92h per worked week (20 days/yr ÷ 52). ${accrualStartStr}.</span>`);
+
+    // Next accrual estimate — credit lands on the Monday after each fully-passed Mon-Sun week.
+    let nextAccrualLine = "";
+    if (profile.accrualStartDate) {
+      const [ty, tm, td] = melDateKey().split("-").map(Number);
+      const today = new Date(Date.UTC(ty, tm - 1, td));
+      const dow = today.getUTCDay(); // 0=Sun
+      const daysUntilSun = dow === 0 ? 7 : (7 - dow);
+      const upcomingSun = new Date(today.getTime() + daysUntilSun * 86_400_000);
+      const sunKey = `${upcomingSun.getUTCFullYear()}-${String(upcomingSun.getUTCMonth()+1).padStart(2,"0")}-${String(upcomingSun.getUTCDate()).padStart(2,"0")}`;
+      nextAccrualLine = `<li>Next +${WEEKLY_ACCRUAL_HOURS.toFixed(2)}h<span class="right">after Sun ${fmtAU(sunKey)}</span></li>`;
+    }
+
+    setTip("tipAccrued", `<span class="head">Accrual</span><ul>
+      <li>Per worked week<span class="right">+${WEEKLY_ACCRUAL_HOURS.toFixed(2)}h</span></li>
+      ${nextAccrualLine}
+      <li>Annual entitlement<span class="right">20 days</span></li>
+    </ul><span class="none" style="margin-top:6px; display:block">${accrualStartStr}. Weeks with no logged work don't accrue.</span>`);
 
     const takenList = approved.slice().sort((a, b) => b.startDate.localeCompare(a.startDate)).slice(0, 8);
     setTip("tipTaken", takenList.length
@@ -241,7 +286,7 @@
     allRequests.sort((a, b) => (b.submittedAt?.toMillis?.() || 0) - (a.submittedAt?.toMillis?.() || 0));
     listEl.classList.remove("empty");
     listEl.innerHTML = `<table class="data">
-      <thead><tr><th>Dates</th><th>Hours</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Dates</th><th>Hours</th><th>Status</th><th>Chat</th><th></th></tr></thead>
       <tbody>${allRequests.map(r => {
         const range = r.startDate === r.endDate ? fmtDay(r.startDate) : `${fmtDay(r.startDate)} → ${fmtDay(r.endDate)}`;
         const badge = r.status === "approved" ? `<span class="badge ok">Approved</span>`
@@ -254,6 +299,7 @@
           <td>${range}${r.reason ? `<div class="muted" style="font-size:11px; margin-top:4px">"${escapeHtml(r.reason)}"</div>` : ""}${note}</td>
           <td>${fmtLeave(r.hours)}</td>
           <td>${badge}</td>
+          <td><span class="comment-badge" data-chat="${r.id}" title="Open conversation">💬 <span data-count="${r.id}">…</span></span></td>
           <td>${cancel}</td>
         </tr>`;
       }).join("")}</tbody>
@@ -267,6 +313,22 @@
         } catch (ex) { alert("Failed: " + (ex.message || ex.code)); }
       });
     });
+    listEl.querySelectorAll("span[data-chat]").forEach(el => {
+      el.addEventListener("click", () => openComments(el.dataset.chat, allRequests.find(r => r.id === el.dataset.chat)));
+    });
+
+    // Live comment counts per request
+    rowChatUnsubs.forEach(fn => fn?.());
+    rowChatUnsubs = allRequests.map(r => subscribeToComments(r.id, (items) => {
+      const el = document.querySelector(`#leaveRequestsList [data-count="${r.id}"]`);
+      if (!el) return;
+      el.textContent = items.length;
+      const badge = el.closest(".comment-badge");
+      if (!badge) return;
+      // "unread" = anything posted by someone other than me (admin reply)
+      const hasNew = items.some(c => c.byUid && c.byUid !== user.uid);
+      badge.classList.toggle("unread", items.length > 0 && hasNew);
+    }));
   }
 
   // ---- Request leave modal ----
@@ -336,6 +398,60 @@
       refresh();
     } catch (ex) { leaveErr.textContent = "Failed: " + (ex.message || ex.code); }
     finally { btn.disabled = false; btn.textContent = "Submit request"; }
+  });
+
+  // ---- Conversation modal ----
+  function openComments(id, req) {
+    if (!req) return;
+    openCommentsReqId = id;
+    openCommentsReq  = req;
+    const range = req.startDate === req.endDate ? fmtDay(req.startDate) : `${fmtDay(req.startDate)} → ${fmtDay(req.endDate)}`;
+    const statusLabel = (req.status || "pending").toUpperCase();
+    document.getElementById("commentsHeader").innerHTML = `
+      <strong>${range}</strong>
+      <div class="muted" style="margin-top:4px">${statusLabel} · ${fmtLeave(req.hours)}</div>
+      ${req.reason ? `<div class="muted" style="margin-top:6px; font-size:13px">"${escapeHtml(req.reason)}"</div>` : ""}
+      ${req.adminNote ? `<div class="muted" style="margin-top:6px; font-size:13px"><em>Admin: ${escapeHtml(req.adminNote)}</em></div>` : ""}
+    `;
+    document.getElementById("commentsInput").value = "";
+    document.getElementById("commentsErr").textContent = "";
+    document.getElementById("commentsModal").classList.add("open");
+    if (activeThreadUnsub) { activeThreadUnsub(); activeThreadUnsub = null; }
+    activeThreadUnsub = subscribeToComments(id, (items) => {
+      document.getElementById("commentsList").innerHTML = renderCommentsThread(items, user.uid);
+      const cont = document.querySelector("#commentsList .comments-thread");
+      if (cont) cont.scrollTop = cont.scrollHeight;
+    });
+  }
+  function closeComments() {
+    document.getElementById("commentsModal").classList.remove("open");
+    if (activeThreadUnsub) { activeThreadUnsub(); activeThreadUnsub = null; }
+    openCommentsReqId = null;
+    openCommentsReq  = null;
+  }
+  document.getElementById("commentsCloseBtn").addEventListener("click", closeComments);
+  document.getElementById("commentsPostBtn").addEventListener("click", async () => {
+    if (!openCommentsReqId) return;
+    const input = document.getElementById("commentsInput");
+    const text  = input.value.trim();
+    if (!text) return;
+    const btn = document.getElementById("commentsPostBtn");
+    btn.disabled = true;
+    try {
+      await addLeaveComment(openCommentsReqId, { profile, user }, text);
+      input.value = "";
+      logAudit({ profile, user }, {
+        action: "leaveRequest.comment",
+        targetType: "leaveRequest",
+        targetId: openCommentsReqId,
+        targetUser: user.uid,
+        note: text.slice(0, 200)
+      });
+    } catch (ex) {
+      document.getElementById("commentsErr").textContent = "Failed: " + (ex.message || ex.code);
+    } finally {
+      btn.disabled = false;
+    }
   });
 
   refresh();

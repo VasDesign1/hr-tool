@@ -547,11 +547,22 @@
       <tbody>${entries.map(e => {
         const u = usersByUid[e.uid];
         const detected = e.autoClosedAt?.toDate?.()?.toLocaleString("en-AU", { timeZone: "Australia/Melbourne", hour12: false }) || "—";
-        return `<tr>
+        const clockInTxt  = e.clockInUTC  ? melTimeShort(e.clockInUTC.toDate())  : "—";
+        const clockOutTxt = e.clockOutUTC ? melTimeShort(e.clockOutUTC.toDate()) : "—";
+        const breakTxt = e.breakMinutes ? `${Math.round(e.breakMinutes)} min` : "none";
+        const tipLines = [
+          `${u?.name || "—"} — auto-closed shift`,
+          `Clocked in:  ${clockInTxt}  (${fmtAU(e.date)})`,
+          `Auto-closed: ${clockOutTxt} → ${fmtHours(e.hoursWorked)} worked, break ${breakTxt}`,
+          `Detected:    ${detected}`,
+          e.autoCloseNote ? `Reason: ${e.autoCloseNote}` : null,
+          "Contractor forgot to clock off — verify the time and edit if wrong."
+        ].filter(Boolean).join("\n");
+        return `<tr title="${escapeHtml(tipLines)}">
           <td>${escapeHtml(u?.name || "—")}</td>
           <td>${fmtAU(e.date)}</td>
-          <td>${e.clockInUTC ? melTimeShort(e.clockInUTC.toDate()) : "—"}</td>
-          <td>${e.clockOutUTC ? melTimeShort(e.clockOutUTC.toDate()) : "—"}</td>
+          <td>${clockInTxt}</td>
+          <td>${clockOutTxt}</td>
           <td><strong>${fmtHours(e.hoursWorked)}</strong></td>
           <td class="muted" style="font-size:12px">${detected}</td>
         </tr>`;
@@ -671,7 +682,15 @@
         const whenLbl = onToday ? `<span class="badge ok" style="background:rgba(239,68,68,.12); color:#991B1B">Today</span>`
                                  : `<span class="muted" style="font-size:12px">in ${Math.max(0, Math.ceil((Date.parse(r.startDate+"T00:00:00Z") - Date.parse(todayKey+"T00:00:00Z")) / 86_400_000))} day(s)</span>`;
         const badge = r.status === "approved" ? `<span class="badge ok">Approved</span>` : `<span class="badge pending">Pending</span>`;
-        return `<tr>
+        const submitted = r.submittedAt?.toDate?.()?.toLocaleString("en-AU", { timeZone: "Australia/Melbourne", hour12: false }) || "—";
+        const tipLines = [
+          `${u?.name || r.requesterName || "—"} — ${r.status.toUpperCase()}`,
+          `${range} · ${fmtLeave(r.hours)}`,
+          `Submitted: ${submitted}`,
+          r.reason ? `Reason: ${r.reason}` : "No reason given",
+          r.adminNote ? `Admin note: ${r.adminNote}` : null
+        ].filter(Boolean).join("\n");
+        return `<tr title="${escapeHtml(tipLines)}">
           <td>${escapeHtml(u?.name || r.requesterName || "—")}</td>
           <td>${range}</td>
           <td>${fmtLeave(r.hours)}</td>

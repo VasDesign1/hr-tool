@@ -75,17 +75,34 @@
   </div>
 </main>
 
-<!-- Decision modal -->
+<!-- Review modal -->
 <div class="modal-backdrop" id="decisionModal">
-  <div class="modal">
-    <h2 id="decisionTitle">Approve request</h2>
+  <div class="modal wide">
+    <h2 id="decisionTitle">Review request</h2>
     <div id="decisionDetails" style="margin-bottom:12px; font-size:14px"></div>
-    <label>Note <span class="muted" style="font-size:11px">(optional, visible to contractor)</span></label>
-    <textarea id="decisionNote" rows="2"></textarea>
-    <div class="error" id="decisionErr"></div>
+
+    <div class="thread-section">
+      <h3>Conversation</h3>
+      <div id="threadList"><div class="thread-empty">Loading…</div></div>
+      <div class="thread-compose">
+        <textarea id="threadInput" rows="2" placeholder="Reply to the contractor (sent without approving / denying)…"></textarea>
+        <div class="row">
+          <button type="button" class="ghost" id="threadPostBtn">Post comment</button>
+        </div>
+        <div class="error" id="threadErr"></div>
+      </div>
+    </div>
+
+    <div class="thread-section">
+      <h3>Decision note <span class="muted" style="font-size:11px; text-transform:none; letter-spacing:0; font-weight:400">(saved on the request when you approve / deny)</span></h3>
+      <textarea id="decisionNote" rows="2"></textarea>
+      <div class="error" id="decisionErr"></div>
+    </div>
+
     <div class="actions">
-      <button type="button" class="ghost" id="decisionCancel">Cancel</button>
-      <button type="button" id="decisionConfirm">Confirm</button>
+      <button type="button" class="ghost" id="decisionCancel">Close</button>
+      <button type="button" class="danger" id="denyBtn">Deny</button>
+      <button type="button" id="approveBtn">Approve</button>
     </div>
   </div>
 </div>
@@ -95,6 +112,7 @@
   import { requireRole } from "../assets/auth-router.js";
   import { renderAdminNav, escapeHtml } from "../assets/admin-nav.js";
   import { logAudit } from "../assets/audit.js";
+  import { subscribeToComments, addLeaveComment, renderCommentsThread } from "../assets/leave-comments.js";
   import { fmtDay, melDateKey, fmtDateShort } from "../assets/time.js";
   // melDateKey already imported above; no-op safeguard
   import { computeBalance, fmtLeave } from "../assets/leave.js";
@@ -104,10 +122,15 @@
     collection, query, where, getDocs, doc, updateDoc, serverTimestamp, orderBy, onSnapshot
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
-  const { profile } = await requireRole(["admin", "viewer"]);
+  const { user, profile } = await requireRole(["admin", "viewer"]);
   const canWrite = profile.role === "admin";
   if (!canWrite) document.body.classList.add("viewer-mode");
   renderAdminNav(profile, "leave");
+
+  let pendingChatUnsubs = []; // per-request comment subs (refreshed on every renderPending)
+  let activeThreadUnsub = null; // single thread sub used while review modal is open
+  let openReviewReqId = null;
+  let openReviewReq = null;
 
   // ---- Load contractors once ----
   const usnap = await getDocs(query(collection(db, "users"), where("role", "==", "contractor")));
@@ -144,7 +167,7 @@
     listEl.classList.remove("empty");
     listEl.innerHTML = `<table class="data">
       <thead>
-        <tr><th>Contractor</th><th>Dates</th><th>Hours</th><th>Reason</th><th>Submitted</th><th></th></tr>
+        <tr><th>Contractor</th><th>Dates</th><th>Hours</th><th>Reason</th><th>Submitted</th><th>Chat</th><th></th></tr>
       </thead>
       <tbody>
         ${reqs.map(r => {
@@ -160,6 +183,7 @@
             <td>${fmtLeave(r.hours)}</td>
             <td class="muted" style="font-size:13px; max-width:240px">${escapeHtml(r.reason || "—")}</td>
             <td class="muted" style="font-size:12px">${submitted}</td>
+            <td><span class="comment-badge" data-chat="${r.id}" title="Open conversation">💬 <span data-count="${r.id}">…</span></span></td>
             <td>
               <div class="actions">
                 <button data-act="approve" data-id="${r.id}">Approve</button>
@@ -172,52 +196,128 @@
     </table>`;
 
     listEl.querySelectorAll("button[data-act]").forEach(btn => {
-      btn.addEventListener("click", () => openDecision(btn.dataset.act, btn.dataset.id, reqs.find(r => r.id === btn.dataset.id)));
+      btn.addEventListener("click", () => openReview(btn.dataset.id, reqs.find(r => r.id === btn.dataset.id)));
     });
+    listEl.querySelectorAll("span[data-chat]").forEach(el => {
+      el.addEventListener("click", () => openReview(el.dataset.chat, reqs.find(r => r.id === el.dataset.chat)));
+    });
+
+    // Subscribe to comment counts for each pending request (live).
+    pendingChatUnsubs.forEach(fn => fn?.());
+    pendingChatUnsubs = reqs.map(r => subscribeToComments(r.id, (items) => {
+      const el = document.querySelector(`[data-count="${r.id}"]`);
+      if (!el) return;
+      el.textContent = items.length;
+      const badge = el.closest(".comment-badge");
+      if (!badge) return;
+      const hasAny = items.length > 0;
+      const hasNew = items.some(c => c.byUid && c.byUid !== user.uid && c.byRole !== "admin");
+      badge.classList.toggle("unread", hasAny && hasNew);
+    }));
   }
 
-  // ---- Decision modal ----
-  let pendingDecision = null;
-  function openDecision(act, id, req) {
-    pendingDecision = { act, id };
+  // ---- Review / decision modal ----
+  function openReview(id, req) {
+    if (!req) return;
+    openReviewReqId = id;
+    openReviewReq = req;
     const u = usersByUid[req.uid];
-    document.getElementById("decisionTitle").textContent = act === "approve" ? "Approve request" : "Deny request";
     const range = req.startDate === req.endDate
       ? fmtDay(req.startDate)
       : `${fmtDay(req.startDate)} → ${fmtDay(req.endDate)}`;
+    const status = req.status || "pending";
+    const isPending = status === "pending";
+    document.getElementById("decisionTitle").textContent = isPending ? "Review request" : `Request — ${status}`;
     document.getElementById("decisionDetails").innerHTML = `
       <strong>${escapeHtml(u?.name || req.requesterName)}</strong>
       <div class="muted" style="margin-top:4px">${range} · ${fmtLeave(req.hours)}</div>
       ${req.reason ? `<div class="muted" style="margin-top:6px; font-size:13px">"${escapeHtml(req.reason)}"</div>` : ""}
+      ${req.adminNote ? `<div class="muted" style="margin-top:6px; font-size:13px"><em>Admin: ${escapeHtml(req.adminNote)}</em></div>` : ""}
     `;
     document.getElementById("decisionNote").value = "";
     document.getElementById("decisionErr").textContent = "";
-    document.getElementById("decisionConfirm").textContent = act === "approve" ? "Approve" : "Deny";
-    document.getElementById("decisionConfirm").className = act === "approve" ? "" : "danger";
+    document.getElementById("threadErr").textContent = "";
+    document.getElementById("threadInput").value = "";
+
+    // Hide decision controls if request already resolved or viewer mode
+    const approveBtn = document.getElementById("approveBtn");
+    const denyBtn    = document.getElementById("denyBtn");
+    const noteBlock  = document.getElementById("decisionNote").closest(".thread-section");
+    const showDecision = isPending && canWrite;
+    approveBtn.style.display = showDecision ? "" : "none";
+    denyBtn.style.display    = showDecision ? "" : "none";
+    if (noteBlock) noteBlock.style.display = showDecision ? "" : "none";
+
+    // Hide compose if viewer
+    const composeBox = document.querySelector("#decisionModal .thread-compose");
+    if (composeBox) composeBox.style.display = canWrite ? "" : "none";
+
+    // Open + start a live subscription on the thread
     document.getElementById("decisionModal").classList.add("open");
+    if (activeThreadUnsub) { activeThreadUnsub(); activeThreadUnsub = null; }
+    activeThreadUnsub = subscribeToComments(id, (items) => {
+      document.getElementById("threadList").innerHTML = renderCommentsThread(items, user.uid);
+      const cont = document.querySelector("#threadList .comments-thread");
+      if (cont) cont.scrollTop = cont.scrollHeight;
+    });
   }
-  document.getElementById("decisionCancel").addEventListener("click", () => {
+
+  function closeReview() {
     document.getElementById("decisionModal").classList.remove("open");
-  });
-  document.getElementById("decisionConfirm").addEventListener("click", async () => {
-    if (!pendingDecision) return;
-    const btn = document.getElementById("decisionConfirm");
+    if (activeThreadUnsub) { activeThreadUnsub(); activeThreadUnsub = null; }
+    openReviewReqId = null;
+    openReviewReq = null;
+  }
+
+  document.getElementById("decisionCancel").addEventListener("click", closeReview);
+
+  document.getElementById("threadPostBtn").addEventListener("click", async () => {
+    if (!openReviewReqId) return;
+    const input = document.getElementById("threadInput");
+    const text  = input.value.trim();
+    if (!text) return;
+    const btn = document.getElementById("threadPostBtn");
     btn.disabled = true;
     try {
-      const newStatus = pendingDecision.act === "approve" ? "approved" : "denied";
+      await addLeaveComment(openReviewReqId, { profile, user }, text);
+      input.value = "";
+      logAudit({ profile, user }, {
+        action: "leaveRequest.comment",
+        targetType: "leaveRequest",
+        targetId: openReviewReqId,
+        targetUser: openReviewReq?.uid || null,
+        note: text.slice(0, 200)
+      });
+    } catch (ex) {
+      document.getElementById("threadErr").textContent = "Failed: " + (ex.message || ex.code);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  async function decide(act) {
+    if (!openReviewReqId || !openReviewReq) return;
+    const approveBtn = document.getElementById("approveBtn");
+    const denyBtn = document.getElementById("denyBtn");
+    approveBtn.disabled = true; denyBtn.disabled = true;
+    try {
+      const newStatus = act === "approve" ? "approved" : "denied";
       const adminNote = document.getElementById("decisionNote").value.trim() || null;
-      await updateDoc(doc(db, "leaveRequests", pendingDecision.id), {
+      await updateDoc(doc(db, "leaveRequests", openReviewReqId), {
         status: newStatus,
         adminNote,
         decidedBy: profile.email,
         decidedAt: serverTimestamp()
       });
-      const reqAffected = await getDocs(query(collection(db, "leaveRequests"), where("__name__", "==", pendingDecision.id)));
-      let targetUserId = null;
-      reqAffected.forEach(d => { targetUserId = d.data().uid; });
-      logAudit({ profile }, { action: `leaveRequest.${newStatus === "approved" ? "approve" : "deny"}`, targetType: "leaveRequest", targetId: pendingDecision.id, targetUser: targetUserId, after: { status: newStatus, adminNote }, note: adminNote || `Marked ${newStatus}` });
-      document.getElementById("decisionModal").classList.remove("open");
-      // pending list updates via onSnapshot automatically
+      logAudit({ profile, user }, {
+        action: `leaveRequest.${act}`,
+        targetType: "leaveRequest",
+        targetId: openReviewReqId,
+        targetUser: openReviewReq.uid || null,
+        after: { status: newStatus, adminNote },
+        note: adminNote || `Marked ${newStatus}`
+      });
+      closeReview();
       loadUpcoming();
       loadBalances();
       loadCalendar();
@@ -225,9 +325,11 @@
     } catch (ex) {
       document.getElementById("decisionErr").textContent = "Failed: " + (ex.message || ex.code);
     } finally {
-      btn.disabled = false;
+      approveBtn.disabled = false; denyBtn.disabled = false;
     }
-  });
+  }
+  document.getElementById("approveBtn").addEventListener("click", () => decide("approve"));
+  document.getElementById("denyBtn").addEventListener("click", () => decide("deny"));
 
   // ---- Upcoming approved ----
   async function loadUpcoming() {
@@ -347,12 +449,7 @@
       entries: allEntries,
       onClickEntry: (entry) => {
         if (entry.isHoliday) return;
-        if (!canWrite) { alert(entry.tooltip); return; }
-        if (entry.full.status === "pending") {
-          openDecision("approve", entry.id, entry.full);
-        } else {
-          alert(entry.tooltip);
-        }
+        openReview(entry.id, entry.full);
       }
     });
   }
