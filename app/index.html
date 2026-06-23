@@ -145,6 +145,7 @@
   document.getElementById("logoutBtn").addEventListener("click", logout);
   const __bb = document.getElementById("brandBadges");
   if (__bb) __bb.innerHTML = roleBadgesHtml(profile);
+  mountAnnouncementBanners(user, profile);
 
   // Greeting
   const hr = new Date().toLocaleString("en-AU", { timeZone: "Australia/Melbourne", hour: "2-digit", hour12: false });

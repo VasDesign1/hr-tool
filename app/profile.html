@@ -83,6 +83,7 @@
   import { requireRole, logout } from "../assets/auth-router.js";
   import { getInitials, roleBadgesHtml } from "../assets/admin-nav.js";
   import { refreshContractorBadges } from "../assets/contractor-nav.js";
+  import { mountAnnouncementBanners } from "../assets/announcements.js";
   import {
     EmailAuthProvider, reauthenticateWithCredential, updatePassword
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
@@ -93,6 +94,7 @@
   document.getElementById("logoutBtn").addEventListener("click", logout);
   const __bb = document.getElementById("brandBadges");
   if (__bb) __bb.innerHTML = roleBadgesHtml(profile);
+  mountAnnouncementBanners(user, profile);
 
   document.getElementById("profileName").textContent  = profile.name || "—";
   document.getElementById("profileEmail").textContent = profile.email || "—";

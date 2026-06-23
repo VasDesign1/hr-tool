@@ -142,6 +142,7 @@
   import { requireRole, logout } from "../assets/auth-router.js";
   import { getInitials, escapeHtml, roleBadgesHtml } from "../assets/admin-nav.js";
   import { refreshContractorBadges } from "../assets/contractor-nav.js";
+  import { mountAnnouncementBanners } from "../assets/announcements.js";
   import { fmtHours, fmtDay, lastNDateKeys, melDateKey, melTimeShort, hoursBetween, fmtAUShort, fmtAUDow, fmtAU } from "../assets/time.js";
   import {
     collection, query, where, getDocs, addDoc, serverTimestamp
@@ -153,6 +154,7 @@
   document.getElementById("logoutBtn").addEventListener("click", logout);
   const __bb = document.getElementById("brandBadges");
   if (__bb) __bb.innerHTML = roleBadgesHtml(profile);
+  mountAnnouncementBanners(user, profile);
 
   const rangePick = document.getElementById("rangePick");
 

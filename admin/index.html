@@ -73,6 +73,31 @@
     <div id="liveList" class="empty">Loading…</div>
   </div>
 
+  <!-- Announcements (admin only) -->
+  <div class="card">
+    <div class="toolbar"><h2>Announcements<span class="live-dot" title="Live"></span></h2></div>
+    <form id="annForm" style="display:grid; grid-template-columns: 1fr auto auto auto; gap:10px; align-items:end">
+      <div>
+        <label style="margin-bottom:0">Message</label>
+        <input type="text" id="annMessage" placeholder="One-line message every contractor will see" required>
+      </div>
+      <div>
+        <label style="margin-bottom:0">Severity</label>
+        <select id="annSeverity" style="min-width:110px">
+          <option value="info">Info</option>
+          <option value="warn">Warning</option>
+          <option value="alert">Alert</option>
+        </select>
+      </div>
+      <div>
+        <label style="margin-bottom:0">Expires</label>
+        <input type="date" id="annExpires" style="max-width:160px">
+      </div>
+      <button type="submit" id="annPostBtn">Post</button>
+    </form>
+    <div id="annList" style="margin-top:14px"></div>
+  </div>
+
   <!-- Recently auto-closed shifts (forgot to clock off) -->
   <div class="card" id="autoCloseCard" style="display:none">
     <div class="toolbar"><h2>Recently auto-closed shifts<span class="live-dot" title="Live"></span></h2><span class="muted" style="font-size:12px">Contractor forgot to clock off — verify and edit if wrong</span></div>
@@ -106,7 +131,7 @@
   import { renderAdminNav, escapeHtml, getInitials } from "../assets/admin-nav.js";
   import { melTimeShort, fmtHours, melDateKey, fmtDateShort, fmtDay, fmtAU, fmtAUDow, fmtAUShort } from "../assets/time.js";
   import { fmtLeave } from "../assets/leave.js";
-  import { collection, query, where, getDocs, getDoc, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+  import { collection, query, where, getDocs, getDoc, doc, onSnapshot, addDoc, updateDoc, deleteDoc, serverTimestamp, Timestamp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const { profile } = await requireRole(["admin", "viewer"]);
   if (profile.role === "viewer") document.body.classList.add("viewer-mode");
@@ -545,6 +570,69 @@
   }
   loadAutoClosed();
   subscribeAutoClosed();
+
+  // ----- Announcements (admin posting + live list) -----
+  const annForm = document.getElementById("annForm");
+  const annList = document.getElementById("annList");
+  annForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById("annMessage").value.trim();
+    if (!msg) return;
+    const severity = document.getElementById("annSeverity").value;
+    const expiresStr = document.getElementById("annExpires").value;
+    const btn = document.getElementById("annPostBtn");
+    btn.disabled = true; btn.textContent = "Posting…";
+    try {
+      const expiresAt = expiresStr
+        ? Timestamp.fromMillis(new Date(expiresStr + "T23:59:59").getTime())
+        : null;
+      await addDoc(collection(db, "announcements"), {
+        message: msg,
+        severity,
+        startAt: serverTimestamp(),
+        expiresAt,
+        createdBy: profile.email,
+        createdAt: serverTimestamp()
+      });
+      annForm.reset();
+    } catch (ex) { alert("Failed: " + (ex.message || ex.code)); }
+    finally { btn.disabled = false; btn.textContent = "Post"; }
+  });
+
+  onSnapshot(collection(db, "announcements"), (snap) => {
+    const items = [];
+    snap.forEach(d => items.push({ id: d.id, ...d.data() }));
+    items.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+    if (items.length === 0) { annList.innerHTML = `<div class="empty">No announcements posted.</div>`; return; }
+    const nowMs = Date.now();
+    annList.innerHTML = `<table class="data">
+      <thead><tr><th>Message</th><th>Severity</th><th>Posted</th><th>Expires</th><th>Status</th><th></th></tr></thead>
+      <tbody>${items.map(a => {
+        const expiresMs = a.expiresAt?.toMillis?.() ?? Infinity;
+        const startsMs  = a.startAt?.toMillis?.() ?? 0;
+        const status = nowMs > expiresMs ? `<span class="badge off">Expired</span>`
+                     : nowMs < startsMs  ? `<span class="badge pending">Pending</span>`
+                     : `<span class="badge ok">Active</span>`;
+        const posted = a.createdAt?.toDate?.()?.toLocaleString("en-AU", { timeZone: "Australia/Melbourne", hour12: false }) || "—";
+        const expires = a.expiresAt?.toDate?.()?.toLocaleDateString("en-AU", { day: "2-digit", month: "2-digit", year: "numeric" }) || "—";
+        return `<tr>
+          <td>${escapeHtml(a.message)}</td>
+          <td><span class="badge ${a.severity === "alert" ? "bad" : a.severity === "warn" ? "pending" : "ok"}">${(a.severity || "info").toUpperCase()}</span></td>
+          <td class="muted" style="font-size:12px">${posted}</td>
+          <td class="muted" style="font-size:12px">${expires}</td>
+          <td>${status}</td>
+          <td><div class="actions"><button class="ghost danger" data-ann-delete="${a.id}">Delete</button></div></td>
+        </tr>`;
+      }).join("")}</tbody>
+    </table>`;
+    annList.querySelectorAll("button[data-ann-delete]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Delete this announcement?")) return;
+        try { await deleteDoc(doc(db, "announcements", btn.dataset.annDelete)); }
+        catch (e) { alert("Failed: " + (e.message || e.code)); }
+      });
+    });
+  });
 
   // ----- Leave today + next 7 days -----
   async function loadLeaveSoon() {

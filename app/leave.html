@@ -139,6 +139,7 @@
   import { requireRole, logout } from "../assets/auth-router.js";
   import { getInitials, escapeHtml, roleBadgesHtml } from "../assets/admin-nav.js";
   import { refreshContractorBadges } from "../assets/contractor-nav.js";
+  import { mountAnnouncementBanners } from "../assets/announcements.js";
   import { fmtDay, melDateKey, fmtDateShort, fmtAU } from "../assets/time.js";
   import { leaveHoursFor, computeBalance, fmtLeave } from "../assets/leave.js";
   import { renderCalendar } from "../assets/calendar.js";
@@ -153,6 +154,7 @@
   document.getElementById("logoutBtn").addEventListener("click", logout);
   const __bb = document.getElementById("brandBadges");
   if (__bb) __bb.innerHTML = roleBadgesHtml(profile);
+  mountAnnouncementBanners(user, profile);
 
   async function refresh() {
     const [teSnap, lrSnap] = await Promise.all([

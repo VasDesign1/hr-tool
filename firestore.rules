@@ -29,7 +29,7 @@ service cloud.firestore {
 
     // Fields a contractor is allowed to self-update on their own profile.
     function userSelfEditableKeys() {
-      return ['mustChangePassword', 'updatedAt', 'currentEntryId', 'clockedInAt', 'currentBreakStartAt'];
+      return ['mustChangePassword', 'updatedAt', 'currentEntryId', 'clockedInAt', 'currentBreakStartAt', 'dismissedAnnouncements'];
     }
 
     match /users/{uid} {
@@ -92,6 +92,33 @@ service cloud.firestore {
     match /settings/{doc} {
       allow read: if signedIn();
       allow write: if isAdmin();
+    }
+
+    // Announcements — anyone signed in can read; only admin writes.
+    match /announcements/{id} {
+      allow read:   if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Comments on leave requests — both the request owner and staff can read+write.
+    match /leaveRequests/{id}/comments/{cid} {
+      allow read: if signedIn() && (
+        isStaff() ||
+        get(/databases/$(db)/documents/leaveRequests/$(id)).data.uid == request.auth.uid
+      );
+      allow create: if signedIn() && (
+        isAdmin() ||
+        get(/databases/$(db)/documents/leaveRequests/$(id)).data.uid == request.auth.uid
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Audit log — append-only. Any signed-in user can create (so contractor self-edits log too).
+    // Reads are restricted to staff or the affected user.
+    match /auditLog/{id} {
+      allow create: if signedIn();
+      allow read:   if isStaff() || (signedIn() && resource.data.targetUser == request.auth.uid);
+      allow update, delete: if false;
     }
   }
 }
