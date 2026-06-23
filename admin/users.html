@@ -145,6 +145,7 @@
   import { auth, db } from "../assets/firebase-init.js";
   import { requireRole } from "../assets/auth-router.js";
   import { renderAdminNav, escapeHtml } from "../assets/admin-nav.js";
+  import { logAudit } from "../assets/audit.js";
   import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
   import {
     getAuth, createUserWithEmailAndPassword, signOut, sendPasswordResetEmail
@@ -391,7 +392,10 @@
       await deleteOwned("timeEntries");
       await deleteOwned("leaveRequests");
       await deleteOwned("timeEditRequests");
+      const rmSnap = await getDoc(doc(db, "users", __rmTargetUid));
+      const rmBefore = rmSnap.exists() ? { name: rmSnap.data().name, email: rmSnap.data().email, role: rmSnap.data().role } : null;
       await deleteDoc(doc(db, "users", __rmTargetUid));
+      logAudit({ profile }, { action: "user.remove", targetType: "user", targetId: __rmTargetUid, targetUser: __rmTargetUid, before: rmBefore, note: `Permanently removed user ${rmBefore?.name || __rmTargetUid}` });
       document.getElementById("removeModal").classList.remove("open");
       __rmTargetUid = null;
       loadUsers();
@@ -412,7 +416,10 @@
     const accrueAllWeeks = document.getElementById("editAccrueAllWeeks").checked;
     const testAccount = document.getElementById("editTestAccount").checked;
     try {
+      const beforeSnap = await getDoc(doc(db, "users", uid));
+      const before = beforeSnap.exists() ? { name: beforeSnap.data().name, role: beforeSnap.data().role, openingBalanceDays: beforeSnap.data().openingBalanceDays, accrualStartDate: beforeSnap.data().accrualStartDate, accrueAllWeeks: !!beforeSnap.data().accrueAllWeeks, testAccount: !!beforeSnap.data().testAccount } : null;
       await updateDoc(doc(db, "users", uid), { name, role, openingBalanceDays, accrualStartDate, accrueAllWeeks, testAccount });
+      logAudit({ profile }, { action: "user.edit", targetType: "user", targetId: uid, targetUser: uid, before, after: { name, role, openingBalanceDays, accrualStartDate, accrueAllWeeks, testAccount }, note: `Edited user ${name}` });
       document.getElementById("editModal").classList.remove("open");
       loadUsers();
     } catch (ex) {

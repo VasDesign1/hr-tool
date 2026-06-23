@@ -94,6 +94,7 @@
   import { db } from "../assets/firebase-init.js";
   import { requireRole } from "../assets/auth-router.js";
   import { renderAdminNav, escapeHtml } from "../assets/admin-nav.js";
+  import { logAudit } from "../assets/audit.js";
   import { fmtDay, melDateKey, fmtDateShort } from "../assets/time.js";
   // melDateKey already imported above; no-op safeguard
   import { computeBalance, fmtLeave } from "../assets/leave.js";
@@ -203,12 +204,18 @@
     const btn = document.getElementById("decisionConfirm");
     btn.disabled = true;
     try {
+      const newStatus = pendingDecision.act === "approve" ? "approved" : "denied";
+      const adminNote = document.getElementById("decisionNote").value.trim() || null;
       await updateDoc(doc(db, "leaveRequests", pendingDecision.id), {
-        status: pendingDecision.act === "approve" ? "approved" : "denied",
-        adminNote: document.getElementById("decisionNote").value.trim() || null,
+        status: newStatus,
+        adminNote,
         decidedBy: profile.email,
         decidedAt: serverTimestamp()
       });
+      const reqAffected = await getDocs(query(collection(db, "leaveRequests"), where("__name__", "==", pendingDecision.id)));
+      let targetUserId = null;
+      reqAffected.forEach(d => { targetUserId = d.data().uid; });
+      logAudit({ profile }, { action: `leaveRequest.${newStatus === "approved" ? "approve" : "deny"}`, targetType: "leaveRequest", targetId: pendingDecision.id, targetUser: targetUserId, after: { status: newStatus, adminNote }, note: adminNote || `Marked ${newStatus}` });
       document.getElementById("decisionModal").classList.remove("open");
       // pending list updates via onSnapshot automatically
       loadUpcoming();

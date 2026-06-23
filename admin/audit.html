@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Audit log — Vic Air HR</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<header class="topbar"></header>
+
+<main>
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Audit log</h1>
+      <div class="page-subtitle">Every admin and contractor write recorded — append-only</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="toolbar">
+      <h2>Filters<span class="live-dot" title="Live"></span></h2>
+      <div class="row" style="flex-wrap:wrap; gap:8px">
+        <select id="whoFilter" style="min-width:180px"><option value="">All actors</option></select>
+        <select id="targetFilter" style="min-width:180px"><option value="">All affected users</option></select>
+        <select id="actionFilter" style="min-width:200px"><option value="">All actions</option></select>
+        <input type="date" id="startDate" style="max-width:160px">
+        <span class="muted">→</span>
+        <input type="date" id="endDate" style="max-width:160px">
+      </div>
+    </div>
+    <div id="auditList" class="empty">Loading…</div>
+  </div>
+</main>
+
+<script type="module">
+  import { db } from "../assets/firebase-init.js";
+  import { requireRole } from "../assets/auth-router.js";
+  import { renderAdminNav, escapeHtml } from "../assets/admin-nav.js";
+  import { fmtAuditAction } from "../assets/audit.js";
+  import { collection, query, where, getDocs, onSnapshot, orderBy } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+  const { profile } = await requireRole(["admin", "viewer"]);
+  if (profile.role === "viewer") document.body.classList.add("viewer-mode");
+  renderAdminNav(profile, "audit");
+
+  // Load users to populate pickers
+  const usnap = await getDocs(collection(db, "users"));
+  const usersByUid = {};
+  usnap.forEach(d => usersByUid[d.id] = { uid: d.id, ...d.data() });
+  const userList = Object.values(usersByUid).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+  const whoFilter = document.getElementById("whoFilter");
+  const targetFilter = document.getElementById("targetFilter");
+  whoFilter.innerHTML += userList.map(u => `<option value="${u.uid}">${escapeHtml(u.name || u.email)}</option>`).join("");
+  targetFilter.innerHTML += userList.map(u => `<option value="${u.uid}">${escapeHtml(u.name || u.email)}</option>`).join("");
+
+  let allEntries = [];
+  const actionSet = new Set();
+
+  function render() {
+    const who = whoFilter.value;
+    const target = targetFilter.value;
+    const action = document.getElementById("actionFilter").value;
+    const start = document.getElementById("startDate").value;
+    const end   = document.getElementById("endDate").value;
+
+    const filtered = allEntries.filter(e => {
+      if (who && e.who?.uid !== who) return false;
+      if (target && e.targetUser !== target) return false;
+      if (action && e.action !== action) return false;
+      const t = e.at?.toDate?.();
+      if (!t) return true;
+      if (start && t < new Date(start + "T00:00:00")) return false;
+      if (end && t > new Date(end + "T23:59:59")) return false;
+      return true;
+    });
+
+    const listEl = document.getElementById("auditList");
+    if (filtered.length === 0) {
+      listEl.classList.add("empty");
+      listEl.innerHTML = "No audit entries match the current filters.";
+      return;
+    }
+    listEl.classList.remove("empty");
+    listEl.innerHTML = `<table class="data">
+      <thead><tr>
+        <th>When</th>
+        <th>Actor</th>
+        <th>Action</th>
+        <th>Affected user</th>
+        <th>Note / detail</th>
+      </tr></thead>
+      <tbody>${filtered.map(e => {
+        const when = e.at?.toDate?.()?.toLocaleString("en-AU", { timeZone: "Australia/Melbourne", hour12: false }) || "—";
+        const actor = e.who?.name || e.who?.email || "—";
+        const actorRole = e.who?.role ? ` <span class="muted" style="font-size:11px">(${e.who.role})</span>` : "";
+        const targetUserDoc = e.targetUser ? usersByUid[e.targetUser] : null;
+        const targetName = targetUserDoc ? (targetUserDoc.name || targetUserDoc.email) : (e.targetUser || "—");
+        const note = [e.note, e.targetId ? `id: ${e.targetId.slice(0, 8)}…` : ""].filter(Boolean).join(" · ");
+        const diff = e.before || e.after
+          ? `<details style="margin-top:4px"><summary class="muted" style="font-size:11px; cursor:pointer">Show diff</summary>
+              <pre style="font-size:11px; background:var(--surface-3); padding:8px; border-radius:6px; margin-top:4px; white-space:pre-wrap; word-break:break-word">${escapeHtml(JSON.stringify({ before: e.before, after: e.after }, null, 2))}</pre>
+             </details>` : "";
+        return `<tr>
+          <td class="muted" style="font-size:12px; white-space:nowrap">${when}</td>
+          <td>${escapeHtml(actor)}${actorRole}</td>
+          <td><span class="muted" style="font-size:13px">${fmtAuditAction(e.action)}</span></td>
+          <td>${escapeHtml(targetName)}</td>
+          <td class="muted" style="font-size:13px">${escapeHtml(note)}${diff}</td>
+        </tr>`;
+      }).join("")}</tbody>
+    </table>`;
+  }
+
+  whoFilter.addEventListener("change", render);
+  targetFilter.addEventListener("change", render);
+  document.getElementById("actionFilter").addEventListener("change", render);
+  document.getElementById("startDate").addEventListener("change", render);
+  document.getElementById("endDate").addEventListener("change", render);
+
+  // Live subscribe to last 500 entries
+  onSnapshot(query(collection(db, "auditLog"), orderBy("at", "desc")), (snap) => {
+    allEntries = [];
+    snap.forEach(d => allEntries.push({ id: d.id, ...d.data() }));
+    actionSet.clear();
+    allEntries.forEach(e => { if (e.action) actionSet.add(e.action); });
+    const actionFilter = document.getElementById("actionFilter");
+    const currentVal = actionFilter.value;
+    actionFilter.innerHTML = `<option value="">All actions</option>` +
+      [...actionSet].sort().map(a => `<option value="${a}"${a === currentVal ? " selected" : ""}>${fmtAuditAction(a)}</option>`).join("");
+    render();
+  });
+</script>
+</body>
+</html>

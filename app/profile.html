@@ -64,6 +64,12 @@
   </div>
 
   <div class="card">
+    <h2>My history<span class="live-dot" title="Live"></span></h2>
+    <p class="muted" style="font-size:13px; margin-top:-4px">Every change made to your data (time entries, leave decisions, profile edits)</p>
+    <div id="myHistoryList" class="empty">Loading…</div>
+  </div>
+
+  <div class="card">
     <h2>Change password</h2>
     <form id="pwForm" style="max-width:440px">
       <label>Current password</label>
@@ -84,6 +90,8 @@
   import { getInitials, roleBadgesHtml } from "../assets/admin-nav.js";
   import { refreshContractorBadges } from "../assets/contractor-nav.js";
   import { mountAnnouncementBanners } from "../assets/announcements.js";
+  import { fmtAuditAction } from "../assets/audit.js";
+  import { collection, query, where, onSnapshot, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
   import {
     EmailAuthProvider, reauthenticateWithCredential, updatePassword
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
@@ -95,6 +103,40 @@
   const __bb = document.getElementById("brandBadges");
   if (__bb) __bb.innerHTML = roleBadgesHtml(profile);
   mountAnnouncementBanners(user, profile);
+
+  // ----- My history: live audit feed for this user (where targetUser == me) -----
+  onSnapshot(
+    query(collection(db, "auditLog"), where("targetUser", "==", user.uid), orderBy("at", "desc"), limit(100)),
+    (snap) => {
+      const items = [];
+      snap.forEach(d => items.push({ id: d.id, ...d.data() }));
+      const el = document.getElementById("myHistoryList");
+      if (items.length === 0) {
+        el.classList.add("empty");
+        el.innerHTML = "Nothing changed yet.";
+        return;
+      }
+      el.classList.remove("empty");
+      el.innerHTML = `<table class="data">
+        <thead><tr><th>When</th><th>What</th><th>By</th><th>Note</th></tr></thead>
+        <tbody>${items.map(e => {
+          const when = e.at?.toDate?.()?.toLocaleString("en-AU", { timeZone: "Australia/Melbourne", hour12: false }) || "—";
+          const by = e.who?.name || e.who?.email || "system";
+          return `<tr>
+            <td class="muted" style="font-size:12px; white-space:nowrap">${when}</td>
+            <td>${fmtAuditAction(e.action)}</td>
+            <td>${escapeHtml(by)}</td>
+            <td class="muted" style="font-size:13px">${escapeHtml(e.note || "—")}</td>
+          </tr>`;
+        }).join("")}</tbody>
+      </table>`;
+    },
+    (err) => console.error("history sub:", err)
+  );
+
+  function escapeHtml(s) {
+    return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  }
 
   document.getElementById("profileName").textContent  = profile.name || "—";
   document.getElementById("profileEmail").textContent = profile.email || "—";

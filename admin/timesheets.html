@@ -140,6 +140,7 @@
   import { db } from "../assets/firebase-init.js";
   import { requireRole } from "../assets/auth-router.js";
   import { renderAdminNav, escapeHtml } from "../assets/admin-nav.js";
+  import { logAudit } from "../assets/audit.js";
   import { fmtHours, fmtDay, lastNDateKeys, melTimeShort, melDateKey, hoursBetween, MEL_TZ, fmtAU, fmtAUDow, fmtAUShort } from "../assets/time.js";
   import {
     collection, query, where, getDocs, orderBy, doc, addDoc, updateDoc, deleteDoc, serverTimestamp, Timestamp, onSnapshot
@@ -232,12 +233,14 @@
   async function decideResolve(status) {
     if (!resolveTarget) return;
     try {
+      const note = document.getElementById("resolveNote").value.trim() || null;
       await updateDoc(doc(db, "timeEditRequests", resolveTarget.id), {
         status,
-        adminNote: document.getElementById("resolveNote").value.trim() || null,
+        adminNote: note,
         resolvedAt: serverTimestamp(),
         resolvedBy: profile.email
       });
+      logAudit({ profile }, { action: `timeEditRequest.${status === "resolved" ? "resolve" : "dismiss"}`, targetType: "timeEditRequest", targetId: resolveTarget.id, targetUser: resolveTarget.uid, after: { status, adminNote: note }, note });
       document.getElementById("resolveModal").classList.remove("open");
       loadEditRequests();
     } catch (ex) {
@@ -478,9 +481,11 @@
     try {
       if (entryId.value) {
         await updateDoc(doc(db, "timeEntries", entryId.value), data);
+        logAudit({ profile }, { action: "timeEntry.edit", targetType: "timeEntry", targetId: entryId.value, targetUser: entryUid.value, after: { date: dateKey, hoursWorked: data.hoursWorked }, note: `Edited time entry on ${dateKey}` });
       } else {
         data.createdAt = serverTimestamp();
-        await addDoc(collection(db, "timeEntries"), data);
+        const ref = await addDoc(collection(db, "timeEntries"), data);
+        logAudit({ profile }, { action: "timeEntry.add", targetType: "timeEntry", targetId: ref.id, targetUser: entryUid.value, after: { date: dateKey, hoursWorked: data.hoursWorked }, note: `Added time entry on ${dateKey}` });
       }
       entryModal.classList.remove("open");
       loadDay();
@@ -497,7 +502,9 @@
       // If the contractor's profile is currently pointing to this open entry, clear it
       const u = users.find(x => x.currentEntryId === entryId.value);
       if (u) await updateDoc(doc(db, "users", u.uid), { currentEntryId: null, clockedInAt: null });
+      const delUid = entryUid.value;
       await deleteDoc(doc(db, "timeEntries", entryId.value));
+      logAudit({ profile }, { action: "timeEntry.delete", targetType: "timeEntry", targetId: entryId.value, targetUser: delUid, note: `Deleted time entry` });
       entryModal.classList.remove("open");
       loadDay();
       if (userPick.value === entryUid.value) loadHistory();
