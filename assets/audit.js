@@ -59,7 +59,8 @@ export function fmtAuditAction(action) {
     user:             "User",
     timeEditRequest:  "Fix request",
     announcement:     "Announcement",
-    accrual:          "Accrual"
+    accrual:          "Accrual",
+    security:         "Security"
   })[type] || type;
   const opLabel = (op || "").replace(/[A-Z]/g, c => " " + c.toLowerCase());
   return `${typeLabel} — ${opLabel}`;

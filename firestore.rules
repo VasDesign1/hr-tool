@@ -113,6 +113,24 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Presence (Security feature) — contractor's client writes its own heartbeat/state;
+    // staff read it on the Security page. Contractors can never read each other's.
+    match /presence/{uid} {
+      allow read:   if isSelf(uid) || isStaff();
+      allow create, update: if isSelf(uid);
+      allow delete: if isAdmin();
+    }
+
+    // Away segments (Security feature) — written silently by the contractor's own
+    // client, read by staff for the daily away report.
+    match /awaySegments/{id} {
+      allow read:   if isStaff() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow update: if isAdmin()
+                    || (signedIn() && resource.data.uid == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
     // Audit log — append-only. Any signed-in user can create (so contractor self-edits log too).
     // Reads are restricted to staff or the affected user.
     match /auditLog/{id} {

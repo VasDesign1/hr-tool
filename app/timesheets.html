@@ -149,6 +149,8 @@
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const { user, profile } = await requireRole("contractor");
+  const { initPresence } = await import("../assets/presence.js");
+  initPresence(user, profile);
   document.getElementById("who").textContent = profile.name || profile.email || "";
   document.getElementById("avatar").textContent = getInitials(profile.name || profile.email);
   document.getElementById("logoutBtn").addEventListener("click", logout);

@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Security — Vic Air HR</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<header class="topbar"></header>
+
+<main>
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Security</h1>
+      <div class="page-subtitle">Activity monitoring — contractors never see any of this</div>
+    </div>
+  </div>
+
+  <!-- Master toggle + threshold -->
+  <div class="card">
+    <div class="toolbar"><h2>Activity monitoring</h2></div>
+    <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap">
+      <label class="switch">
+        <input type="checkbox" id="secToggle" disabled>
+        <span class="slider"></span>
+      </label>
+      <div style="flex:1; min-width:240px">
+        <div style="font-weight:600" id="cfgTitle">Loading…</div>
+        <div class="muted" style="font-size:12.5px" id="cfgDesc"></div>
+      </div>
+      <div style="display:flex; align-items:end; gap:10px">
+        <div>
+          <label style="margin-bottom:2px; font-size:12px">Away after (minutes)</label>
+          <input type="number" id="thresholdInput" min="1" max="120" step="1" style="max-width:110px" disabled>
+        </div>
+        <button id="saveThresholdBtn" disabled>Save</button>
+      </div>
+    </div>
+    <div class="muted" style="font-size:12px; margin-top:12px; line-height:1.6">
+      While ON and a contractor is clocked in: no mouse/keyboard input anywhere on their computer
+      (or screen locked) for longer than the threshold is recorded as <b>AWAY</b>. Closing the app,
+      shutting the laptop or losing internet counts as away too — there are no loopholes.
+      Contractors see nothing except a one-time browser permission ("Know when you're actively
+      using this device") which they must <b>Allow</b>. Requires Chrome or Edge on their side.
+    </div>
+  </div>
+
+  <!-- Live board -->
+  <div class="card">
+    <div class="toolbar"><h2>Live team status<span class="live-dot" title="Live"></span></h2><span class="muted" style="font-size:12px">refreshes automatically</span></div>
+    <div id="liveBoard" class="empty">Loading…</div>
+  </div>
+
+  <!-- Daily report -->
+  <div class="card">
+    <div class="toolbar">
+      <h2>Daily away report</h2>
+      <div class="row" style="display:flex; align-items:center; gap:8px">
+        <button class="ghost" id="prevDayBtn" title="Previous day">←</button>
+        <input type="date" id="reportDate" style="max-width:170px">
+        <button class="ghost" id="nextDayBtn" title="Next day">→</button>
+      </div>
+    </div>
+    <div id="reportArea" class="empty">Loading…</div>
+  </div>
+</main>
+
+<script type="module">
+  import { db } from "../assets/firebase-init.js";
+  import { requireRole } from "../assets/auth-router.js";
+  import { renderAdminNav, escapeHtml } from "../assets/admin-nav.js";
+  import { logAudit } from "../assets/audit.js";
+  import { melDateKey, melTimeShort, fmtMins, fmtHours, fmtDay } from "../assets/time.js";
+  import {
+    collection, query, where, getDocs, doc, setDoc, onSnapshot, serverTimestamp
+  } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+  const { user, profile } = await requireRole(["admin", "viewer"]);
+  renderAdminNav(profile, "security");
+  const canEdit = profile.role === "admin";
+
+  const REASON_LABEL = { idle: "No activity", locked: "Screen locked", offline: "Offline / app closed" };
+
+  let cfg = { enabled: false, thresholdMinutes: 2 };
+  let contractors = new Map();   // uid -> user doc
+  let presence = new Map();      // uid -> presence doc
+
+  // ================================================================ settings
+  const toggle = document.getElementById("secToggle");
+  const thresholdInput = document.getElementById("thresholdInput");
+  const saveBtn = document.getElementById("saveThresholdBtn");
+
+  onSnapshot(doc(db, "settings", "security"), (snap) => {
+    const d = snap.exists() ? snap.data() : {};
+    cfg = { enabled: !!d.enabled, thresholdMinutes: Math.max(1, Number(d.thresholdMinutes) || 2) };
+    toggle.checked = cfg.enabled;
+    toggle.disabled = !canEdit;
+    if (document.activeElement !== thresholdInput) thresholdInput.value = cfg.thresholdMinutes;
+    thresholdInput.disabled = !canEdit;
+    saveBtn.disabled = !canEdit;
+    document.getElementById("cfgTitle").textContent =
+      cfg.enabled ? "Monitoring is ON" : "Monitoring is OFF";
+    document.getElementById("cfgDesc").textContent = cfg.enabled
+      ? `Idle for ${cfg.thresholdMinutes} min+ while clocked in → recorded as AWAY.`
+      : "Nothing is being recorded. Flip the switch to start.";
+    renderLive();
+  }, (e) => console.error("settings sub:", e));
+
+  toggle.addEventListener("change", async () => {
+    if (!canEdit) return;
+    const enabled = toggle.checked;
+    toggle.disabled = true;
+    try {
+      await setDoc(doc(db, "settings", "security"), {
+        enabled,
+        thresholdMinutes: cfg.thresholdMinutes,
+        updatedAt: serverTimestamp(),
+        updatedBy: { uid: user.uid, name: profile.name || profile.email || "" }
+      }, { merge: true });
+      logAudit({ profile, user }, {
+        action: enabled ? "security.enable" : "security.disable",
+        targetType: "security",
+        note: `Activity monitoring turned ${enabled ? "ON" : "OFF"}`
+      });
+    } catch (ex) {
+      alert("Failed: " + (ex.message || ex.code));
+      toggle.checked = !enabled;
+    }
+    toggle.disabled = !canEdit;
+  });
+
+  saveBtn.addEventListener("click", async () => {
+    if (!canEdit) return;
+    const mins = Math.min(120, Math.max(1, Math.round(Number(thresholdInput.value) || 2)));
+    thresholdInput.value = mins;
+    saveBtn.disabled = true; saveBtn.textContent = "Saving…";
+    try {
+      const before = cfg.thresholdMinutes;
+      await setDoc(doc(db, "settings", "security"), {
+        thresholdMinutes: mins,
+        updatedAt: serverTimestamp(),
+        updatedBy: { uid: user.uid, name: profile.name || profile.email || "" }
+      }, { merge: true });
+      logAudit({ profile, user }, {
+        action: "security.threshold",
+        targetType: "security",
+        before: { thresholdMinutes: before },
+        after:  { thresholdMinutes: mins }
+      });
+    } catch (ex) { alert("Failed: " + (ex.message || ex.code)); }
+    saveBtn.disabled = false; saveBtn.textContent = "Save";
+  });
+
+  // ================================================================ live board
+  onSnapshot(query(collection(db, "users"), where("role", "==", "contractor")), (snap) => {
+    contractors = new Map();
+    snap.forEach(d => { const u = d.data(); if (u.active !== false) contractors.set(d.id, u); });
+    renderLive();
+  }, (e) => console.error("users sub:", e));
+
+  onSnapshot(collection(db, "presence"), (snap) => {
+    presence = new Map();
+    snap.forEach(d => presence.set(d.id, d.data()));
+    renderLive();
+  }, (e) => console.error("presence sub:", e));
+
+  function liveRow(uid, u) {
+    const p = presence.get(uid);
+    const now = Date.now();
+    const clockedIn = !!u.currentEntryId;
+    const lastSeenMs = p?.lastSeenAt?.toMillis?.() || 0;
+    const staleMs = (cfg.thresholdMinutes + 2) * 60_000;
+
+    let pill, detail = "";
+    if (!clockedIn) {
+      pill = `<span class="status-pill none"><span class="dot"></span>Off shift</span>`;
+    } else if (!cfg.enabled) {
+      pill = `<span class="status-pill working"><span class="dot"></span>On shift</span>`;
+      detail = "monitoring off";
+    } else if (!lastSeenMs || (now - lastSeenMs) > staleMs) {
+      pill = `<span class="status-pill offline"><span class="dot"></span>Offline</span>`;
+      detail = lastSeenMs
+        ? `no signal since ${melTimeShort(new Date(lastSeenMs))} · ${fmtMins((now - lastSeenMs) / 60_000)}`
+        : "no signal yet — app not open or permission missing";
+    } else if (u.currentBreakStartAt) {
+      pill = `<span class="status-pill break"><span class="dot"></span>On break</span>`;
+      detail = `since ${melTimeShort(u.currentBreakStartAt.toDate())}`;
+    } else if (p?.state === "away") {
+      const sinceMs = p.awaySince?.toMillis?.() || lastSeenMs;
+      pill = `<span class="status-pill away"><span class="dot"></span>Away</span>`;
+      detail = `for ${fmtMins((now - sinceMs) / 60_000)} · since ${melTimeShort(new Date(sinceMs))}`;
+    } else {
+      pill = `<span class="status-pill working"><span class="dot"></span>Active</span>`;
+      detail = `last signal ${melTimeShort(new Date(lastSeenMs))}`;
+    }
+
+    let chips = "";
+    if (u.testAccount) chips += `<span class="track-chip">TEST</span>`;
+    if (clockedIn && cfg.enabled && p && p.tracking && p.tracking !== "ok") {
+      const label = p.tracking === "unsupported" ? "BROWSER NOT SUPPORTED"
+                  : p.tracking === "no-permission" ? "NO PERMISSION"
+                  : "TRACKING ERROR";
+      chips += `<span class="track-chip warn" title="Idle detection isn't running — only offline gaps are recorded">${label}</span>`;
+    }
+
+    return `<tr>
+      <td><b>${escapeHtml(u.name || u.email || uid)}</b>${chips}</td>
+      <td>${pill}</td>
+      <td class="muted" style="font-size:12.5px">${escapeHtml(detail)}</td>
+    </tr>`;
+  }
+
+  function renderLive() {
+    const el = document.getElementById("liveBoard");
+    if (!el) return;
+    if (contractors.size === 0) { el.classList.add("empty"); el.innerHTML = "No contractors yet."; return; }
+    el.classList.remove("empty");
+    const rows = [...contractors.entries()]
+      .sort((a, b) => (a[1].name || "").localeCompare(b[1].name || ""))
+      .map(([uid, u]) => liveRow(uid, u)).join("");
+    el.innerHTML = `<table class="data">
+      <thead><tr><th>Contractor</th><th>Status</th><th>Detail</th></tr></thead>
+      <tbody>${rows}</tbody></table>`;
+  }
+  setInterval(renderLive, 15_000);
+
+  // ================================================================ daily report
+  const reportDate = document.getElementById("reportDate");
+  reportDate.value = melDateKey();
+  reportDate.addEventListener("change", () => loadReport().catch(console.error));
+  document.getElementById("prevDayBtn").addEventListener("click", () => shiftDay(-1));
+  document.getElementById("nextDayBtn").addEventListener("click", () => shiftDay(1));
+
+  function shiftDay(delta) {
+    const [y, m, d] = reportDate.value.split("-").map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d + delta));
+    reportDate.value = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
+    loadReport().catch(console.error);
+  }
+
+  async function loadReport() {
+    const key = reportDate.value;
+    const area = document.getElementById("reportArea");
+    area.classList.add("empty"); area.innerHTML = "Loading…";
+
+    const [segSnap, teSnap] = await Promise.all([
+      getDocs(query(collection(db, "awaySegments"), where("date", "==", key))),
+      getDocs(query(collection(db, "timeEntries"), where("date", "==", key)))
+    ]);
+
+    const byUid = new Map();
+    segSnap.forEach(d => {
+      const s = d.data();
+      if (!byUid.has(s.uid)) byUid.set(s.uid, { segments: [], workedH: 0, shifts: 0 });
+      byUid.get(s.uid).segments.push(s);
+    });
+    teSnap.forEach(d => {
+      const e = d.data();
+      if (!byUid.has(e.uid)) byUid.set(e.uid, { segments: [], workedH: 0, shifts: 0 });
+      const rec = byUid.get(e.uid);
+      rec.workedH += e.hoursWorked || 0;
+      rec.shifts++;
+    });
+
+    const isToday = key === melDateKey();
+    const uids = [...byUid.keys()].filter(uid => contractors.has(uid) || byUid.get(uid).segments.length);
+    if (uids.length === 0) {
+      area.innerHTML = `No shifts or away time recorded for ${fmtDay(key)}.`;
+      return;
+    }
+
+    const blocks = uids
+      .sort((a, b) => ((contractors.get(a)?.name) || a).localeCompare((contractors.get(b)?.name) || b))
+      .map(uid => {
+        const rec = byUid.get(uid);
+        const name = contractors.get(uid)?.name || contractors.get(uid)?.email || uid;
+        const segs = rec.segments.slice().sort((a, b) => (a.startUTC?.toMillis?.() || 0) - (b.startUTC?.toMillis?.() || 0));
+        let totalAwayMin = 0;
+        const segRows = segs.map(s => {
+          const startMs = s.startUTC?.toMillis?.();
+          const endMs = s.endUTC?.toMillis?.() || (isToday ? Date.now() : startMs);
+          const mins = Math.max(0, (endMs - startMs) / 60_000);
+          totalAwayMin += mins;
+          const ongoing = !s.endUTC && isToday;
+          return `<tr>
+            <td>${melTimeShort(new Date(startMs))} → ${ongoing ? "now" : melTimeShort(new Date(endMs))}</td>
+            <td>${fmtMins(mins)}${ongoing ? ` <span class="muted" style="font-size:11px">· ongoing</span>` : ""}</td>
+            <td class="muted" style="font-size:12px">${REASON_LABEL[s.reason] || escapeHtml(s.reason || "—")}</td>
+          </tr>`;
+        }).join("");
+
+        const summary = [
+          rec.shifts ? `worked ${fmtHours(rec.workedH)}` : "no closed shift",
+          `<b style="color:${totalAwayMin > 0 ? "#B45309" : "#065F46"}">away ${fmtMins(totalAwayMin)}</b>`,
+          `${segs.length} period${segs.length === 1 ? "" : "s"}`
+        ].join(" · ");
+
+        return `<div style="margin-bottom:18px">
+          <div style="display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:6px">
+            <b style="font-size:14px">${escapeHtml(name)}</b>
+            <span class="muted" style="font-size:12.5px">${summary}</span>
+          </div>
+          ${segs.length
+            ? `<table class="data"><thead><tr><th>Period (Melbourne)</th><th>Duration</th><th>Reason</th></tr></thead><tbody>${segRows}</tbody></table>`
+            : `<div class="muted" style="font-size:12.5px">No away time recorded. 🎉</div>`}
+        </div>`;
+      });
+
+    area.classList.remove("empty");
+    area.innerHTML = blocks.join("");
+  }
+  loadReport().catch(console.error);
+  // Keep today's report fresh (live ongoing segments).
+  setInterval(() => { if (reportDate.value === melDateKey()) loadReport().catch(() => {}); }, 60_000);
+</script>
+</body>
+</html>
