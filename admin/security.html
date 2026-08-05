@@ -76,7 +76,7 @@
   import { logAudit } from "../assets/audit.js";
   import { melDateKey, melTimeShort, fmtMins, fmtHours, fmtDay } from "../assets/time.js";
   import {
-    collection, query, where, getDocs, doc, setDoc, onSnapshot, serverTimestamp
+    collection, query, where, getDocs, doc, setDoc, deleteDoc, onSnapshot, serverTimestamp
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const { user, profile } = await requireRole(["admin", "viewer"]);
@@ -250,7 +250,7 @@
       const startMs = s.startUTC?.toMillis?.() || 0;
       // An open segment can't run past the end of the shift it belongs to.
       const rawEnd = s.endUTC?.toMillis?.() || Math.min(nowMs, shiftEndMs || nowMs);
-      return { startMs, endMs: Math.max(startMs, rawEnd), reason: s.reason, open: !s.endUTC };
+      return { id: s.id, startMs, endMs: Math.max(startMs, rawEnd), reason: s.reason, open: !s.endUTC };
     }).filter(s => s.startMs > 0).sort((a, b) => a.startMs - b.startMs);
 
     const merged = [];
@@ -261,10 +261,10 @@
         last.endMs = Math.max(last.endMs, it.endMs);
         last.open = last.open || it.open;
         last.reasons.add(it.reason);
-        last.mergedCount++;
+        last.raws.push(it);
       } else {
         merged.push({ startMs: it.startMs, endMs: it.endMs, open: it.open,
-                      reasons: new Set([it.reason]), mergedCount: 1 });
+                      reasons: new Set([it.reason]), raws: [it] });
       }
     }
     return merged;
@@ -290,7 +290,7 @@
     segSnap.forEach(d => {
       const s = d.data();
       if (!byUid.has(s.uid)) byUid.set(s.uid, blank());
-      byUid.get(s.uid).segments.push(s);
+      byUid.get(s.uid).segments.push({ id: d.id, ...s });
     });
     teSnap.forEach(d => {
       const e = d.data();
@@ -325,15 +325,34 @@
         const rawCount = rec.segments.length;
 
         let totalAwayMin = 0;
-        const segRows = periods.map(p => {
+        const segRows = periods.map((p, i) => {
           const mins = (p.endMs - p.startMs) / 60_000;
           totalAwayMin += mins;
           const ongoing = p.open && p.endMs >= nowMs - 1000;
+          const rowKey = `${uid}_${i}`;
+          const rawLine = (r) => {
+            const range = `${melTimeShort(new Date(r.startMs))} → ${r.open ? "…" : melTimeShort(new Date(r.endMs))}`;
+            const label = `${name}: ${range} · ${REASON_LABEL[r.reason] || r.reason || "—"}`;
+            return `<div class="raw-line">
+              <span>${range} · ${fmtMins((r.endMs - r.startMs) / 60_000)} · ${escapeHtml(REASON_LABEL[r.reason] || r.reason || "—")}</span>
+              ${r.open ? `<span class="track-chip warn">STILL OPEN</span>` : ""}
+              ${canEdit ? `<button class="ghost mini" data-del="${r.id}" data-label="${escapeHtml(label)}" title="Delete this record permanently">✕</button>` : ""}
+            </div>`;
+          };
+          const actionCell = p.raws.length > 1
+            ? `<button class="ghost mini" data-toggle="${rowKey}">${p.raws.length} records ▾</button>`
+            : (canEdit
+                ? `<button class="ghost mini" data-del="${p.raws[0].id}" data-label="${escapeHtml(`${name}: ${melTimeShort(new Date(p.startMs))} → ${ongoing ? "now" : melTimeShort(new Date(p.endMs))} · ${reasonText(p.reasons)}`)}" title="Delete this record permanently">✕</button>`
+                : "");
+          const subRow = p.raws.length > 1
+            ? `<tr data-raws="${rowKey}" style="display:none"><td colspan="4" class="raw-cell">${p.raws.map(rawLine).join("")}</td></tr>`
+            : "";
           return `<tr>
             <td>${melTimeShort(new Date(p.startMs))} → ${ongoing ? "now" : melTimeShort(new Date(p.endMs))}</td>
             <td>${fmtMins(mins)}${ongoing ? ` <span class="muted" style="font-size:11px">· ongoing</span>` : ""}</td>
             <td class="muted" style="font-size:12px">${escapeHtml(reasonText(p.reasons))}</td>
-          </tr>`;
+            <td style="text-align:right">${actionCell}</td>
+          </tr>${subRow}`;
         }).join("");
 
         const awayH = totalAwayMin / 60;
@@ -355,7 +374,7 @@
             ${mergedNote}
           </div>
           ${periods.length
-            ? `<table class="data away-table"><thead><tr><th>Period (Melbourne)</th><th>Duration</th><th>Reason</th></tr></thead><tbody>${segRows}</tbody></table>`
+            ? `<table class="data away-table"><thead><tr><th>Period (Melbourne)</th><th>Duration</th><th>Reason</th><th></th></tr></thead><tbody>${segRows}</tbody></table>`
             : `<div class="muted" style="font-size:12.5px">No away time recorded. 🎉</div>`}
         </div>`;
       });
@@ -363,6 +382,36 @@
     area.classList.remove("empty");
     area.innerHTML = blocks.join("");
   }
+  // Expand merged records / delete a record (admin only). Attached once —
+  // loadReport() re-renders the rows but this listener survives on the parent.
+  document.getElementById("reportArea").addEventListener("click", async (ev) => {
+    const btn = ev.target.closest("button");
+    if (!btn) return;
+    if (btn.dataset.toggle) {
+      const row = document.querySelector(`tr[data-raws="${btn.dataset.toggle}"]`);
+      if (row) row.style.display = row.style.display === "none" ? "" : "none";
+      return;
+    }
+    if (btn.dataset.del) {
+      if (!canEdit) return;
+      if (!confirm(`Delete this away record?\n\n${btn.dataset.label}\n\nIt is removed from the report permanently. Use this for junk records (e.g. a stuck "still open" one from a second device).`)) return;
+      btn.disabled = true;
+      try {
+        await deleteDoc(doc(db, "awaySegments", btn.dataset.del));
+        logAudit({ profile, user }, {
+          action: "security.deleteRecord",
+          targetType: "security",
+          targetId: btn.dataset.del,
+          note: btn.dataset.label
+        });
+        await loadReport();
+      } catch (ex) {
+        alert("Failed: " + (ex.message || ex.code));
+        btn.disabled = false;
+      }
+    }
+  });
+
   loadReport().catch(console.error);
   // Keep today's report fresh (live ongoing segments).
   setInterval(() => { if (reportDate.value === melDateKey()) loadReport().catch(() => {}); }, 60_000);

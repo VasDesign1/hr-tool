@@ -1370,9 +1370,17 @@ a.name-link:hover { text-decoration: underline; }
 /* Security → daily away report: identical column widths on every contractor
    table so the three columns line up down the whole page. */
 .away-table { table-layout: fixed; width: 100%; }
-.away-table th:nth-child(1), .away-table td:nth-child(1) { width: 42%; }
-.away-table th:nth-child(2), .away-table td:nth-child(2) { width: 22%; }
-.away-table th:nth-child(3), .away-table td:nth-child(3) { width: 36%; }
+.away-table th:nth-child(1), .away-table td:nth-child(1) { width: 36%; }
+.away-table th:nth-child(2), .away-table td:nth-child(2) { width: 20%; }
+.away-table th:nth-child(3), .away-table td:nth-child(3) { width: 30%; }
+.away-table th:nth-child(4), .away-table td:nth-child(4) { width: 14%; }
+.away-table .mini { padding: 3px 9px; font-size: 11.5px; line-height: 1.3; }
+.away-table .raw-cell { background: #F8FAFC; padding: 8px 14px; }
+.raw-line {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 12.5px; color: #475569; padding: 3px 0;
+}
+.raw-line > span:first-child { flex: 1; }
 .report-block { margin-bottom: 22px; }
 .report-block:last-child { margin-bottom: 0; }
 .report-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
