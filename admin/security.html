@@ -59,9 +59,9 @@
   <div class="card">
     <div class="toolbar">
       <h2>Daily away report</h2>
-      <div class="row" style="display:flex; align-items:center; gap:8px">
+      <div class="day-nav">
         <button class="ghost" id="prevDayBtn" title="Previous day">←</button>
-        <input type="date" id="reportDate" style="max-width:170px">
+        <input type="date" id="reportDate">
         <button class="ghost" id="nextDayBtn" title="Next day">→</button>
       </div>
     </div>
@@ -242,6 +242,38 @@
     loadReport().catch(console.error);
   }
 
+  // Overlapping raw segments (two devices/tabs recording, or a segment left open
+  // by a sleeping machine) must never be counted twice. Merge them into real
+  // wall-clock periods first — the total is then always "minutes actually away".
+  function mergeSegments(raw, nowMs, shiftEndMs) {
+    const items = raw.map(s => {
+      const startMs = s.startUTC?.toMillis?.() || 0;
+      // An open segment can't run past the end of the shift it belongs to.
+      const rawEnd = s.endUTC?.toMillis?.() || Math.min(nowMs, shiftEndMs || nowMs);
+      return { startMs, endMs: Math.max(startMs, rawEnd), reason: s.reason, open: !s.endUTC };
+    }).filter(s => s.startMs > 0).sort((a, b) => a.startMs - b.startMs);
+
+    const merged = [];
+    for (const it of items) {
+      const last = merged[merged.length - 1];
+      if (last && it.startMs <= last.endMs) {
+        // Overlaps (or touches) the previous period → extend it, don't add a row.
+        last.endMs = Math.max(last.endMs, it.endMs);
+        last.open = last.open || it.open;
+        last.reasons.add(it.reason);
+        last.mergedCount++;
+      } else {
+        merged.push({ startMs: it.startMs, endMs: it.endMs, open: it.open,
+                      reasons: new Set([it.reason]), mergedCount: 1 });
+      }
+    }
+    return merged;
+  }
+
+  function reasonText(reasons) {
+    return [...reasons].map(r => REASON_LABEL[r] || r || "—").join(" + ");
+  }
+
   async function loadReport() {
     const key = reportDate.value;
     const area = document.getElementById("reportArea");
@@ -252,21 +284,32 @@
       getDocs(query(collection(db, "timeEntries"), where("date", "==", key)))
     ]);
 
+    const nowMs = Date.now();
+    const blank = () => ({ segments: [], workedH: 0, shifts: 0, openShift: false, shiftEndMs: 0 });
     const byUid = new Map();
     segSnap.forEach(d => {
       const s = d.data();
-      if (!byUid.has(s.uid)) byUid.set(s.uid, { segments: [], workedH: 0, shifts: 0 });
+      if (!byUid.has(s.uid)) byUid.set(s.uid, blank());
       byUid.get(s.uid).segments.push(s);
     });
     teSnap.forEach(d => {
       const e = d.data();
-      if (!byUid.has(e.uid)) byUid.set(e.uid, { segments: [], workedH: 0, shifts: 0 });
+      if (!byUid.has(e.uid)) byUid.set(e.uid, blank());
       const rec = byUid.get(e.uid);
-      rec.workedH += e.hoursWorked || 0;
       rec.shifts++;
+      const inMs = e.clockInUTC?.toMillis?.() || 0;
+      const outMs = e.clockOutUTC?.toMillis?.() || 0;
+      if (outMs) {
+        rec.workedH += e.hoursWorked || 0;
+        rec.shiftEndMs = Math.max(rec.shiftEndMs, outMs);
+      } else if (inMs) {
+        // Shift still running — count it live instead of showing "worked 0m".
+        rec.openShift = true;
+        rec.workedH += Math.max(0, (nowMs - inMs) / 3_600_000 - (e.breakMinutes || 0) / 60);
+        rec.shiftEndMs = nowMs;
+      }
     });
 
-    const isToday = key === melDateKey();
     const uids = [...byUid.keys()].filter(uid => contractors.has(uid) || byUid.get(uid).segments.length);
     if (uids.length === 0) {
       area.innerHTML = `No shifts or away time recorded for ${fmtDay(key)}.`;
@@ -278,34 +321,41 @@
       .map(uid => {
         const rec = byUid.get(uid);
         const name = contractors.get(uid)?.name || contractors.get(uid)?.email || uid;
-        const segs = rec.segments.slice().sort((a, b) => (a.startUTC?.toMillis?.() || 0) - (b.startUTC?.toMillis?.() || 0));
+        const periods = mergeSegments(rec.segments, nowMs, rec.shiftEndMs);
+        const rawCount = rec.segments.length;
+
         let totalAwayMin = 0;
-        const segRows = segs.map(s => {
-          const startMs = s.startUTC?.toMillis?.();
-          const endMs = s.endUTC?.toMillis?.() || (isToday ? Date.now() : startMs);
-          const mins = Math.max(0, (endMs - startMs) / 60_000);
+        const segRows = periods.map(p => {
+          const mins = (p.endMs - p.startMs) / 60_000;
           totalAwayMin += mins;
-          const ongoing = !s.endUTC && isToday;
+          const ongoing = p.open && p.endMs >= nowMs - 1000;
           return `<tr>
-            <td>${melTimeShort(new Date(startMs))} → ${ongoing ? "now" : melTimeShort(new Date(endMs))}</td>
+            <td>${melTimeShort(new Date(p.startMs))} → ${ongoing ? "now" : melTimeShort(new Date(p.endMs))}</td>
             <td>${fmtMins(mins)}${ongoing ? ` <span class="muted" style="font-size:11px">· ongoing</span>` : ""}</td>
-            <td class="muted" style="font-size:12px">${REASON_LABEL[s.reason] || escapeHtml(s.reason || "—")}</td>
+            <td class="muted" style="font-size:12px">${escapeHtml(reasonText(p.reasons))}</td>
           </tr>`;
         }).join("");
 
+        const awayH = totalAwayMin / 60;
+        const activeH = Math.max(0, rec.workedH - awayH);
         const summary = [
-          rec.shifts ? `worked ${fmtHours(rec.workedH)}` : "no closed shift",
+          rec.shifts ? `on shift ${fmtHours(rec.workedH)}${rec.openShift ? " (open)" : ""}` : "no shift",
+          `active ${fmtHours(activeH)}`,
           `<b style="color:${totalAwayMin > 0 ? "#B45309" : "#065F46"}">away ${fmtMins(totalAwayMin)}</b>`,
-          `${segs.length} period${segs.length === 1 ? "" : "s"}`
+          `${periods.length} period${periods.length === 1 ? "" : "s"}`
         ].join(" · ");
+        const mergedNote = rawCount > periods.length
+          ? `<span class="muted" style="font-size:11.5px">${rawCount - periods.length} overlapping record${rawCount - periods.length === 1 ? "" : "s"} merged</span>`
+          : "";
 
-        return `<div style="margin-bottom:18px">
-          <div style="display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:6px">
+        return `<div class="report-block">
+          <div class="report-head">
             <b style="font-size:14px">${escapeHtml(name)}</b>
             <span class="muted" style="font-size:12.5px">${summary}</span>
+            ${mergedNote}
           </div>
-          ${segs.length
-            ? `<table class="data"><thead><tr><th>Period (Melbourne)</th><th>Duration</th><th>Reason</th></tr></thead><tbody>${segRows}</tbody></table>`
+          ${periods.length
+            ? `<table class="data away-table"><thead><tr><th>Period (Melbourne)</th><th>Duration</th><th>Reason</th></tr></thead><tbody>${segRows}</tbody></table>`
             : `<div class="muted" style="font-size:12.5px">No away time recorded. 🎉</div>`}
         </div>`;
       });

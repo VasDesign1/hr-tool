@@ -11,18 +11,25 @@
 //     and screen lock. After `thresholdMinutes` of no input anywhere on the
 //     computer, an awaySegment opens; when input resumes it closes.
 //     Declared breaks are NOT counted as away (they're already visible as breaks).
-//   • Offline gap recovery — on next page load, any gap since the last heartbeat
-//     while clocked in is back-filled as an 'offline' awaySegment. So closing the
-//     tab or shutting the laptop still counts as away. No loopholes.
+//   • Offline gap recovery — on next load, a gap since the last heartbeat while
+//     clocked in is back-filled as an 'offline' awaySegment (skipped when another
+//     of the contractor's devices was alive during the gap).
+//
+// SINGLE-WRITER RULE (fixes double counting): only ONE browser context per
+// contractor may record at a time. Election happens in the presence doc itself
+// (writerId/writerAt) so it works ACROSS devices and browsers, not just tabs:
+//   - Each heartbeat, the tab reads presence/{uid}. If the current writer's
+//     writerAt is fresh (<3 min) and isn't us, we stay completely silent.
+//   - If the writer goes dark (device slept / closed), the next tab that beats
+//     takes over, closes any away segments the dead writer left open, and
+//     carries on. A localStorage election still picks one tab per browser first.
 //
 // Firestore:
 //   settings/security     { enabled, thresholdMinutes }           (admin-written)
-//   presence/{uid}        { state, tracking, entryId, lastSeenAt, awaySince, name }
+//   presence/{uid}        { state, tracking, entryId, lastSeenAt, awaySince,
+//                           writerId, writerAt, name }
 //   awaySegments/{autoId} { uid, date, entryId, startUTC, endUTC, minutes, reason, open }
 //     reason: 'idle' (no input) | 'locked' (screen locked) | 'offline' (app closed / asleep)
-//
-// Multi-tab safe: a lightweight localStorage leader election makes sure only one
-// open tab writes heartbeats/segments, so nothing double-counts.
 
 import { db } from "./firebase-init.js";
 import { melDateKey } from "./time.js";
@@ -32,7 +39,9 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 const HEARTBEAT_MS = 60_000;
-const OWNER_STALE_MS = 90_000;
+const OWNER_STALE_MS = 90_000;      // same-browser tab election
+const WRITER_STALE_MS = 3 * 60_000; // cross-device writer election
+const SWEEP_MS = 5 * 60_000;        // how often the writer sweeps stuck segments
 
 let user = null, profile = null;
 let cfg = { enabled: false, thresholdMinutes: 2 };
@@ -41,16 +50,22 @@ let cfgLoaded = false, userLoaded = false;
 let clockedIn = false, entryId = null, onBreak = false, clockInMs = null;
 let started = false;
 let recovered = false;
+let amWriter = false;
+let lastBeatAt = 0, lastSweepAt = 0;
+let beatBusy = false;
 let tracking = "ok";            // ok | no-permission | unsupported | error
+let detector = null;
 let detectorAbort = null;
 let detectorThresholdMin = null;
 let hbTimer = null;
 let dialogShownThisLoad = false;
+let openingSeg = false;
 
 const TAB_ID = Math.random().toString(36).slice(2) + Date.now().toString(36);
 const ownerKey = () => `vh_presence_owner_${user.uid}`;
 const beatKey  = () => `vh_presence_beat_${user.uid}`;
 const segKey   = () => `vh_presence_openseg_${user.uid}`;
+const presenceRef = () => doc(db, "presence", user.uid);
 
 // ---------------------------------------------------------------- entry point
 export function initPresence(u, p) {
@@ -58,7 +73,7 @@ export function initPresence(u, p) {
 
   onSnapshot(doc(db, "settings", "security"), (snap) => {
     const d = snap.exists() ? snap.data() : {};
-    const prevEnabled = cfg.enabled, prevThreshold = cfg.thresholdMinutes;
+    const prevThreshold = cfg.thresholdMinutes;
     cfg = {
       enabled: !!d.enabled,
       thresholdMinutes: Math.max(1, Number(d.thresholdMinutes) || 2)
@@ -95,12 +110,11 @@ function evaluate() {
 
 async function startTracking() {
   started = true;
-  try { if (isLeader() && !recovered) { recovered = true; await recoverGaps(); } } catch (e) { console.error("presence recover:", e); }
+  await beat(true);   // claim (or defer) writership before anything else
 
-  beat();
-  hbTimer = setInterval(beat, HEARTBEAT_MS);
-  window.addEventListener("focus", beat);
-  window.addEventListener("online", beat);
+  hbTimer = setInterval(() => beat(), HEARTBEAT_MS);
+  window.addEventListener("focus", onWake);
+  window.addEventListener("online", onWake);
   document.addEventListener("visibilitychange", onVisible);
 
   setupIdleDetection();
@@ -109,19 +123,25 @@ async function startTracking() {
 async function stopTracking() {
   started = false;
   clearInterval(hbTimer); hbTimer = null;
-  window.removeEventListener("focus", beat);
-  window.removeEventListener("online", beat);
+  window.removeEventListener("focus", onWake);
+  window.removeEventListener("online", onWake);
   document.removeEventListener("visibilitychange", onVisible);
-  if (detectorAbort) { detectorAbort.abort(); detectorAbort = null; }
+  if (detectorAbort) { detectorAbort.abort(); detectorAbort = null; detector = null; }
   try { await closeSegment(Date.now()); } catch {}
-  if (isLeader()) {
-    presenceWrite({ state: clockedIn ? "active" : "off", awaySince: null }).catch(() => {});
+  if (amWriter) {
+    amWriter = false;
+    // Release writership so another device can take over instantly.
+    presenceWrite({
+      state: clockedIn ? "active" : "off",
+      awaySince: null, writerId: null, writerAt: null
+    }).catch(() => {});
   }
 }
 
+function onWake() { beat(); }
 function onVisible() { if (document.visibilityState === "visible") beat(); }
 
-// Single-writer election so multiple open tabs don't double-log.
+// Same-browser tab election (cheap first gate; cross-device election is in beat()).
 function isLeader() {
   try {
     const rec = JSON.parse(localStorage.getItem(ownerKey()) || "null");
@@ -133,11 +153,46 @@ function isLeader() {
   } catch { return true; }
 }
 
-// ----------------------------------------------------------------- heartbeat
-function beat() {
-  if (!started || !isLeader()) return;
-  try { localStorage.setItem(beatKey(), String(Date.now())); } catch {}
-  presenceWrite({ lastSeenAt: serverTimestamp() }).catch((e) => console.error("presence beat:", e));
+// ------------------------------------------- heartbeat + cross-device election
+async function beat(force = false) {
+  if (!started || beatBusy || !isLeader()) return;
+  if (!force && Date.now() - lastBeatAt < 20_000) return; // debounce focus bursts
+  beatBusy = true;
+  lastBeatAt = Date.now();
+  try {
+    const pSnap = await getDoc(presenceRef());
+    const p = pSnap.exists() ? pSnap.data() : {};
+    const writerAtMs = p.writerAt?.toMillis?.() || 0;
+    const writerFresh = writerAtMs && (Date.now() - writerAtMs) < WRITER_STALE_MS;
+    const wasWriter = amWriter;
+    amWriter = !p.writerId || p.writerId === TAB_ID || !writerFresh;
+
+    if (amWriter) {
+      if (!recovered) {
+        recovered = true;
+        const closedAny = await sweepOrphans();
+        if (!closedAny) await backfillOfflineGap(p);
+        lastSweepAt = Date.now();
+      } else if (!wasWriter || Date.now() - lastSweepAt > SWEEP_MS) {
+        await sweepOrphans();
+        lastSweepAt = Date.now();
+      }
+      await presenceWrite({
+        lastSeenAt: serverTimestamp(),
+        writerId: TAB_ID,
+        writerAt: serverTimestamp()
+      });
+    } else {
+      // Another device/browser is actively recording — stay completely silent
+      // so nothing double-counts. Drop any local open segment claim; the real
+      // writer (or a future sweep) owns segment lifecycle now.
+      try { localStorage.removeItem(segKey()); } catch {}
+    }
+    try { localStorage.setItem(beatKey(), String(Date.now())); } catch {}
+  } catch (e) {
+    console.error("presence beat:", e);
+  }
+  beatBusy = false;
 }
 
 function currentState() {
@@ -148,7 +203,7 @@ function currentState() {
 }
 
 async function presenceWrite(extra) {
-  await setDoc(doc(db, "presence", user.uid), {
+  await setDoc(presenceRef(), {
     uid: user.uid,
     name: profile.name || profile.email || "",
     state: currentState(),
@@ -163,13 +218,12 @@ async function presenceWrite(extra) {
 async function setupIdleDetection() {
   if (!("IdleDetector" in window)) {
     tracking = "unsupported";
-    beat();
     return;
   }
   let perm = "prompt";
   try { perm = (await navigator.permissions.query({ name: "idle-detection" })).state; } catch {}
   if (perm === "granted") return startDetector();
-  if (perm === "denied") { tracking = "no-permission"; beat(); return; }
+  if (perm === "denied") { tracking = "no-permission"; return; }
   // Needs a user gesture → one-time dialog; its button click is the gesture.
   showPermissionDialog();
 }
@@ -179,11 +233,12 @@ async function startDetector() {
     if (detectorAbort) detectorAbort.abort();
     detectorAbort = new AbortController();
     detectorThresholdMin = cfg.thresholdMinutes;
-    const detector = new IdleDetector();
+    detector = new IdleDetector();
     detector.addEventListener("change", () => {
+      if (!amWriter || !started) return;   // non-writers never record anything
       const locked = detector.screenState === "locked";
       const idle = detector.userState === "idle" || locked;
-      if (idle && started && clockedIn && !onBreak) {
+      if (idle && clockedIn && !onBreak) {
         // The idle event fires AFTER the threshold has already elapsed, so the
         // away period really started `threshold` ago. Screen lock fires instantly.
         const startMs = locked && detector.userState !== "idle"
@@ -199,11 +254,14 @@ async function startDetector() {
       signal: detectorAbort.signal
     });
     tracking = "ok";
-    beat();
+    // If a previous page load left a local open segment but the user is
+    // clearly back at the machine, close it now.
+    if (amWriter && readOpenSeg() && detector.userState === "active" && detector.screenState !== "locked") {
+      closeSegment(Date.now()).catch(() => {});
+    }
   } catch (e) {
     console.error("presence detector:", e);
     tracking = "error";
-    beat();
   }
 }
 
@@ -217,23 +275,28 @@ function readOpenSeg() {
 }
 
 async function openSegment(reason, startMs) {
-  if (!isLeader() || readOpenSeg()) return;
-  const ref = await addDoc(collection(db, "awaySegments"), {
-    uid: user.uid,
-    date: melDateKey(new Date(startMs)),
-    entryId,
-    startUTC: Timestamp.fromMillis(startMs),
-    endUTC: null, minutes: null,
-    reason, open: true,
-    createdAt: serverTimestamp()
-  });
-  try { localStorage.setItem(segKey(), JSON.stringify({ id: ref.id, startMs, reason })); } catch {}
-  await presenceWrite({ state: "away", awaySince: Timestamp.fromMillis(startMs) });
+  if (!amWriter || !isLeader() || openingSeg || readOpenSeg()) return;
+  openingSeg = true;
+  try {
+    const ref = await addDoc(collection(db, "awaySegments"), {
+      uid: user.uid,
+      date: melDateKey(new Date(startMs)),
+      entryId,
+      startUTC: Timestamp.fromMillis(startMs),
+      endUTC: null, minutes: null,
+      reason, open: true,
+      createdAt: serverTimestamp()
+    });
+    try { localStorage.setItem(segKey(), JSON.stringify({ id: ref.id, startMs, reason })); } catch {}
+    await presenceWrite({ state: "away", awaySince: Timestamp.fromMillis(startMs) });
+  } finally {
+    openingSeg = false;
+  }
 }
 
 async function closeSegment(endMs) {
   const seg = readOpenSeg();
-  if (!seg || !isLeader()) return;
+  if (!seg || !amWriter || !isLeader()) return;
   const minutes = Math.max(0, (endMs - seg.startMs) / 60_000);
   await updateDoc(doc(db, "awaySegments", seg.id), {
     endUTC: Timestamp.fromMillis(Math.max(endMs, seg.startMs)),
@@ -243,51 +306,57 @@ async function closeSegment(endMs) {
   await presenceWrite({ state: currentState(), awaySince: null });
 }
 
-// On load: close segments a dead tab left open, and back-fill the offline gap
-// since the last heartbeat. Any untracked minute while clocked in counts as away.
-async function recoverGaps() {
+// The writer closes any open segments it doesn't own — segments left behind by
+// a device that locked/slept/closed mid-away. Returns how many it closed.
+async function sweepOrphans() {
+  const localId = readOpenSeg()?.id || null;
   const snap = await getDocs(query(
     collection(db, "awaySegments"),
     where("uid", "==", user.uid), where("open", "==", true)
   ));
-  let closedStale = false;
+  let closed = 0;
   for (const d of snap.docs) {
+    if (d.id === localId) continue;
     const s = d.data();
+    const startMs = s.startUTC?.toMillis?.() ?? Date.now();
     let endMs = Date.now();
     if (s.entryId && s.entryId !== entryId) {
-      // Segment belongs to an already-finished shift → cap it at that clock-out.
+      // Belongs to an already-finished shift → cap at that shift's clock-out.
       try {
         const out = (await getDoc(doc(db, "timeEntries", s.entryId))).data()?.clockOutUTC?.toMillis?.();
         if (out) endMs = out;
       } catch {}
     }
-    const startMs = s.startUTC?.toMillis?.() ?? endMs;
     await updateDoc(d.ref, {
       endUTC: Timestamp.fromMillis(Math.max(endMs, startMs)),
       minutes: Math.max(0, (endMs - startMs) / 60_000),
       open: false, recovered: true
     });
-    closedStale = true;
+    closed++;
   }
-  try { localStorage.removeItem(segKey()); } catch {}
+  return closed;
+}
 
-  if (closedStale || !clockedIn || !clockInMs) return;
+// Back-fill the offline gap since this browser's last heartbeat — but only the
+// part of the gap where no other device of this contractor was alive either.
+async function backfillOfflineGap(p) {
+  if (!clockedIn || !clockInMs) return;
   const lastBeat = Number(localStorage.getItem(beatKey()) || 0);
   if (!lastBeat) return;
-  const gapStart = Math.max(lastBeat, clockInMs);
+  const otherAliveMs = p?.lastSeenAt?.toMillis?.() || 0;
+  const gapStart = Math.max(lastBeat, clockInMs, otherAliveMs);
   const gapMin = (Date.now() - gapStart) / 60_000;
-  if (gapMin >= cfg.thresholdMinutes) {
-    await addDoc(collection(db, "awaySegments"), {
-      uid: user.uid,
-      date: melDateKey(new Date(gapStart)),
-      entryId,
-      startUTC: Timestamp.fromMillis(gapStart),
-      endUTC: Timestamp.fromMillis(Date.now()),
-      minutes: gapMin,
-      reason: "offline", open: false,
-      createdAt: serverTimestamp()
-    });
-  }
+  if (gapMin < cfg.thresholdMinutes) return;
+  await addDoc(collection(db, "awaySegments"), {
+    uid: user.uid,
+    date: melDateKey(new Date(gapStart)),
+    entryId,
+    startUTC: Timestamp.fromMillis(gapStart),
+    endUTC: Timestamp.fromMillis(Date.now()),
+    minutes: gapMin,
+    reason: "offline", open: false,
+    createdAt: serverTimestamp()
+  });
 }
 
 // -------------------------------------------------- one-time permission dialog
@@ -295,7 +364,6 @@ function showPermissionDialog() {
   if (dialogShownThisLoad) return;
   dialogShownThisLoad = true;
   tracking = "no-permission"; // until granted
-  beat();
 
   const wrap = document.createElement("div");
   wrap.className = "presence-backdrop";
@@ -317,8 +385,8 @@ function showPermissionDialog() {
     try {
       const res = await IdleDetector.requestPermission(); // needs this click's gesture
       if (res === "granted") { await startDetector(); }
-      else { tracking = "no-permission"; beat(); }
-    } catch (e) { console.error("presence permission:", e); tracking = "no-permission"; beat(); }
+      else { tracking = "no-permission"; }
+    } catch (e) { console.error("presence permission:", e); tracking = "no-permission"; }
     wrap.remove();
   });
 }

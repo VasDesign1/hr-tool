@@ -1366,3 +1366,18 @@ a.name-link:hover { text-decoration: underline; }
 .presence-modal h3 { margin: 0 0 8px; font-size: 16px; }
 .presence-modal p { margin: 0 0 12px; font-size: 13.5px; color: #475569; line-height: 1.55; }
 .presence-modal .row-btns { display: flex; gap: 10px; justify-content: flex-end; margin-top: 14px; }
+
+/* Security → daily away report: identical column widths on every contractor
+   table so the three columns line up down the whole page. */
+.away-table { table-layout: fixed; width: 100%; }
+.away-table th:nth-child(1), .away-table td:nth-child(1) { width: 42%; }
+.away-table th:nth-child(2), .away-table td:nth-child(2) { width: 22%; }
+.away-table th:nth-child(3), .away-table td:nth-child(3) { width: 36%; }
+.report-block { margin-bottom: 22px; }
+.report-block:last-child { margin-bottom: 0; }
+.report-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+
+/* Day picker: arrows stay on one line beside the date. */
+.day-nav { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+.day-nav input[type="date"] { width: 150px; min-width: 0; margin: 0; }
+.day-nav button { padding: 6px 12px; line-height: 1; flex: 0 0 auto; }
