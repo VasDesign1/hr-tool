@@ -76,7 +76,7 @@
   import { logAudit } from "../assets/audit.js";
   import { melDateKey, melTimeShort, fmtMins, fmtHours, fmtDay } from "../assets/time.js";
   import {
-    collection, query, where, getDocs, doc, setDoc, deleteDoc, onSnapshot, serverTimestamp
+    collection, query, where, getDocs, doc, setDoc, onSnapshot, serverTimestamp
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const { user, profile } = await requireRole(["admin", "viewer"]);
@@ -245,13 +245,27 @@
   // Overlapping raw segments (two devices/tabs recording, or a segment left open
   // by a sleeping machine) must never be counted twice. Merge them into real
   // wall-clock periods first — the total is then always "minutes actually away".
-  function mergeSegments(raw, nowMs, shiftEndMs) {
-    const items = raw.map(s => {
+  function mergeSegments(raw, nowMs, shiftEndMs, windows) {
+    // Away time only counts while ON SHIFT: clip every record to the day's
+    // shift window(s). Kills leftovers from a forgotten clock-off (a tab idling
+    // all evening) without touching the stored records.
+    const items = [];
+    raw.forEach(s => {
       const startMs = s.startUTC?.toMillis?.() || 0;
+      if (!startMs) return;
       // An open segment can't run past the end of the shift it belongs to.
       const rawEnd = s.endUTC?.toMillis?.() || Math.min(nowMs, shiftEndMs || nowMs);
-      return { id: s.id, startMs, endMs: Math.max(startMs, rawEnd), reason: s.reason, open: !s.endUTC };
-    }).filter(s => s.startMs > 0).sort((a, b) => a.startMs - b.startMs);
+      const endMs = Math.max(startMs, rawEnd);
+      if (!windows || !windows.length) {
+        items.push({ id: s.id, startMs, endMs, reason: s.reason, open: !s.endUTC });
+        return;
+      }
+      for (const w of windows) {
+        const cs = Math.max(startMs, w.start), ce = Math.min(endMs, w.end);
+        if (cs < ce) items.push({ id: s.id, startMs: cs, endMs: ce, reason: s.reason, open: !s.endUTC });
+      }
+    });
+    items.sort((a, b) => a.startMs - b.startMs);
 
     const merged = [];
     for (const it of items) {
@@ -285,7 +299,7 @@
     ]);
 
     const nowMs = Date.now();
-    const blank = () => ({ segments: [], workedH: 0, shifts: 0, openShift: false, shiftEndMs: 0 });
+    const blank = () => ({ segments: [], workedH: 0, shifts: 0, openShift: false, shiftEndMs: 0, windows: [] });
     const byUid = new Map();
     segSnap.forEach(d => {
       const s = d.data();
@@ -302,11 +316,13 @@
       if (outMs) {
         rec.workedH += e.hoursWorked || 0;
         rec.shiftEndMs = Math.max(rec.shiftEndMs, outMs);
+        if (inMs) rec.windows.push({ start: inMs, end: outMs });
       } else if (inMs) {
         // Shift still running — count it live instead of showing "worked 0m".
         rec.openShift = true;
         rec.workedH += Math.max(0, (nowMs - inMs) / 3_600_000 - (e.breakMinutes || 0) / 60);
         rec.shiftEndMs = nowMs;
+        rec.windows.push({ start: inMs, end: nowMs });
       }
     });
 
@@ -321,7 +337,7 @@
       .map(uid => {
         const rec = byUid.get(uid);
         const name = contractors.get(uid)?.name || contractors.get(uid)?.email || uid;
-        const periods = mergeSegments(rec.segments, nowMs, rec.shiftEndMs);
+        const periods = mergeSegments(rec.segments, nowMs, rec.shiftEndMs, rec.windows);
         const rawCount = rec.segments.length;
 
         let totalAwayMin = 0;
@@ -332,18 +348,14 @@
           const rowKey = `${uid}_${i}`;
           const rawLine = (r) => {
             const range = `${melTimeShort(new Date(r.startMs))} → ${r.open ? "…" : melTimeShort(new Date(r.endMs))}`;
-            const label = `${name}: ${range} · ${REASON_LABEL[r.reason] || r.reason || "—"}`;
             return `<div class="raw-line">
               <span>${range} · ${fmtMins((r.endMs - r.startMs) / 60_000)} · ${escapeHtml(REASON_LABEL[r.reason] || r.reason || "—")}</span>
               ${r.open ? `<span class="track-chip warn">STILL OPEN</span>` : ""}
-              ${canEdit ? `<button class="ghost mini" data-del="${r.id}" data-label="${escapeHtml(label)}" title="Delete this record permanently">✕</button>` : ""}
             </div>`;
           };
           const actionCell = p.raws.length > 1
             ? `<button class="ghost mini" data-toggle="${rowKey}">${p.raws.length} records ▾</button>`
-            : (canEdit
-                ? `<button class="ghost mini" data-del="${p.raws[0].id}" data-label="${escapeHtml(`${name}: ${melTimeShort(new Date(p.startMs))} → ${ongoing ? "now" : melTimeShort(new Date(p.endMs))} · ${reasonText(p.reasons)}`)}" title="Delete this record permanently">✕</button>`
-                : "");
+            : "";
           const subRow = p.raws.length > 1
             ? `<tr data-raws="${rowKey}" style="display:none"><td colspan="4" class="raw-cell">${p.raws.map(rawLine).join("")}</td></tr>`
             : "";
@@ -382,34 +394,13 @@
     area.classList.remove("empty");
     area.innerHTML = blocks.join("");
   }
-  // Expand merged records / delete a record (admin only). Attached once —
+  // Expand/collapse a merged period's raw records. Attached once —
   // loadReport() re-renders the rows but this listener survives on the parent.
-  document.getElementById("reportArea").addEventListener("click", async (ev) => {
+  document.getElementById("reportArea").addEventListener("click", (ev) => {
     const btn = ev.target.closest("button");
-    if (!btn) return;
-    if (btn.dataset.toggle) {
-      const row = document.querySelector(`tr[data-raws="${btn.dataset.toggle}"]`);
-      if (row) row.style.display = row.style.display === "none" ? "" : "none";
-      return;
-    }
-    if (btn.dataset.del) {
-      if (!canEdit) return;
-      if (!confirm(`Delete this away record?\n\n${btn.dataset.label}\n\nIt is removed from the report permanently. Use this for junk records (e.g. a stuck "still open" one from a second device).`)) return;
-      btn.disabled = true;
-      try {
-        await deleteDoc(doc(db, "awaySegments", btn.dataset.del));
-        logAudit({ profile, user }, {
-          action: "security.deleteRecord",
-          targetType: "security",
-          targetId: btn.dataset.del,
-          note: btn.dataset.label
-        });
-        await loadReport();
-      } catch (ex) {
-        alert("Failed: " + (ex.message || ex.code));
-        btn.disabled = false;
-      }
-    }
+    if (!btn || !btn.dataset.toggle) return;
+    const row = document.querySelector(`tr[data-raws="${btn.dataset.toggle}"]`);
+    if (row) row.style.display = row.style.display === "none" ? "" : "none";
   });
 
   loadReport().catch(console.error);
