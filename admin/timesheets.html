@@ -283,13 +283,13 @@
     const byUid = {};
     snap.forEach(d => {
       const e = { id: d.id, ...d.data() };
-      if (!byUid[e.uid]) byUid[e.uid] = { hours: 0, sessions: [], openStart: null };
+      if (!byUid[e.uid]) byUid[e.uid] = { hours: 0, sessions: [], openStart: null, openBreakMins: 0 };
       const bucket = byUid[e.uid];
       const start = e.clockInUTC.toDate();
       const end   = e.clockOutUTC ? e.clockOutUTC.toDate() : null;
       bucket.sessions.push({ id: e.id, start, end });
       if (end) bucket.hours += e.hoursWorked || 0;
-      else bucket.openStart = start;
+      else { bucket.openStart = start; bucket.openBreakMins = e.breakMinutes || 0; }
     });
 
     const now = Date.now();
@@ -300,10 +300,12 @@
       let statusHtml, hoursHtml;
       if (b && b.openStart && isOnBreakNow) {
         const brkStart = liveUser.currentBreakStartAt.toDate();
+        // Worked-so-far = clock-in → break-start, minus breaks already taken this shift.
+        const live = Math.max(0, hoursBetween(b.openStart.getTime(), brkStart.getTime()) - b.openBreakMins / 60);
         statusHtml = `<span class="status-pill break"><span class="dot"></span>On break since ${melTimeShort(brkStart)} <span style="opacity:.7; margin-left:6px">· clocked in ${melTimeShort(b.openStart)}</span></span>`;
-        hoursHtml = `<span style="color:#7C3AED; font-weight:700">${fmtHours(b.hours)}</span>`;
+        hoursHtml = `<span style="color:#7C3AED; font-weight:700">${fmtHours(b.hours + live)}</span>`;
       } else if (b && b.openStart) {
-        const live = isToday ? hoursBetween(b.openStart.getTime(), now) : 0;
+        const live = isToday ? Math.max(0, hoursBetween(b.openStart.getTime(), now) - b.openBreakMins / 60) : 0;
         statusHtml = `<span class="status-pill working"><span class="dot"></span>Working since ${melTimeShort(b.openStart)}</span>`;
         hoursHtml = `<span style="color:#4ade80; font-weight:700">${fmtHours(b.hours + live)}</span>`;
       } else if (b && b.hours > 0) {
