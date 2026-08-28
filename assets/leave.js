@@ -34,11 +34,17 @@ export function workingDaysBetween(startKey, endKey) {
 
 
 // Total hours of leave requested across a date range, honouring half-day toggles.
+// Single-day request: EITHER toggle (or both) means half a day — a one-day
+// request can never be less than half a day, only the morning/afternoon differs.
 export function leaveHoursFor(startKey, endKey, halfDayStart = false, halfDayEnd = false) {
   const days = workingDaysBetween(startKey, endKey);
   let hours = days * DAILY_HOURS;
-  if (halfDayStart) hours -= DAILY_HOURS / 2;
-  if (halfDayEnd && startKey !== endKey) hours -= DAILY_HOURS / 2;
+  if (startKey === endKey) {
+    if (halfDayStart || halfDayEnd) hours -= DAILY_HOURS / 2;
+  } else {
+    if (halfDayStart) hours -= DAILY_HOURS / 2;
+    if (halfDayEnd) hours -= DAILY_HOURS / 2;
+  }
   return Math.max(0, hours);
 }
 
