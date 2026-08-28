@@ -115,11 +115,11 @@
   import { subscribeToComments, addLeaveComment, renderCommentsThread } from "../assets/leave-comments.js";
   import { fmtDay, melDateKey, fmtDateShort } from "../assets/time.js";
   // melDateKey already imported above; no-op safeguard
-  import { computeBalance, fmtLeave } from "../assets/leave.js";
+  import { computeBalance, fmtLeave, adjustmentsFromSnap, halfDayLabel, DAILY_HOURS } from "../assets/leave.js";
   import { renderCalendar } from "../assets/calendar.js";
   import { holidaysAsCalendarEntries } from "../assets/holidays.js";
   import {
-    collection, query, where, getDocs, doc, updateDoc, serverTimestamp, orderBy, onSnapshot
+    collection, query, where, getDocs, doc, addDoc, updateDoc, serverTimestamp, orderBy, onSnapshot
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const { user, profile } = await requireRole(["admin", "viewer"]);
@@ -199,7 +199,7 @@
           const range = r.startDate === r.endDate
             ? fmtDay(r.startDate)
             : `${fmtDay(r.startDate)} → ${fmtDay(r.endDate)}`;
-          const halfNote = (r.halfDayStart || r.halfDayEnd) ? ` <span class="muted" style="font-size:11px">(½ day)</span>` : "";
+          const halfNote = halfChip(r);
           const submitted = r.submittedAt?.toDate?.()?.toLocaleString("en-AU", { timeZone: "Australia/Melbourne", hour12: false }) || "—";
           return `<tr>
             <td>${escapeHtml(u?.name || r.requesterName || "—")}</td>
@@ -375,7 +375,7 @@
             : `${fmtDay(r.startDate)} → ${fmtDay(r.endDate)}`;
           return `<tr>
             <td>${escapeHtml(u?.name || r.requesterName || "—")}</td>
-            <td>${range}</td>
+            <td>${range}${halfChip(r)}</td>
             <td>${fmtLeave(r.hours)}</td>
             <td class="muted" style="font-size:13px">${escapeHtml(r.reason || "—")}</td>
             <td><span class="comment-badge" data-chat="${r.id}" title="Open conversation">💬 <span data-count="${r.id}">…</span></span></td>
@@ -399,30 +399,38 @@
       return;
     }
     const rows = await Promise.all(uids.map(async (uid) => {
-      const [teSnap, lrSnap] = await Promise.all([
+      const [teSnap, lrSnap, adjSnap] = await Promise.all([
         getDocs(query(collection(db, "timeEntries"), where("uid", "==", uid))),
-        getDocs(query(collection(db, "leaveRequests"), where("uid", "==", uid), where("status", "==", "approved")))
+        getDocs(query(collection(db, "leaveRequests"), where("uid", "==", uid), where("status", "==", "approved"))),
+        getDocs(collection(db, "leaveLedger", uid, "entries"))
       ]);
       const timeEntries = [];
       teSnap.forEach(d => timeEntries.push(d.data()));
       const approved = [];
       lrSnap.forEach(d => approved.push(d.data()));
-      const b = computeBalance(timeEntries, approved, usersByUid[uid]);
+      const b = computeBalance(timeEntries, approved, usersByUid[uid], adjustmentsFromSnap(adjSnap));
       return { user: usersByUid[uid], ...b };
     }));
 
+    balanceCache = {};
+    rows.forEach(r => balanceCache[r.user.uid] = { name: r.user.name || r.user.email, balance: r.balance });
+
     listEl.classList.remove("empty");
     listEl.innerHTML = `<table class="data">
-      <thead><tr><th>Contractor</th><th>Available</th><th>Accrued</th><th>Taken</th></tr></thead>
+      <thead><tr><th>Contractor</th><th>Available</th><th>Accrued</th><th>Taken</th><th>Adjusted</th>${canWrite ? "<th></th>" : ""}</tr></thead>
       <tbody>
         ${rows.map(r => `<tr>
           <td>${escapeHtml(r.user.name || r.user.email)}</td>
           <td><strong>${fmtLeave(r.balance)}</strong></td>
           <td class="muted">${fmtLeave(r.accrued)}</td>
           <td class="muted">${fmtLeave(r.taken)}</td>
+          <td class="muted" style="${r.adjusted ? "color:#6D28D9; font-weight:600" : ""}">${r.adjusted ? (r.adjusted > 0 ? "+" : "−") + fmtLeave(Math.abs(r.adjusted)) : "—"}</td>
+          ${canWrite ? `<td><button class="ghost" data-adjust="${r.user.uid}">Adjust…</button></td>` : ""}
         </tr>`).join("")}
       </tbody>
     </table>`;
+    listEl.querySelectorAll("[data-adjust]").forEach(btn =>
+      btn.addEventListener("click", () => openAdjust(btn.dataset.adjust)));
   }
 
   // ---- Team calendar ----
@@ -441,7 +449,7 @@
       const range = r.startDate === r.endDate ? r.startDate : `${r.startDate} → ${r.endDate}`;
       const lines = [
         `${u?.name || r.requesterName}`,
-        `${r.status.toUpperCase()} · ${fmtLeave(r.hours)}`,
+        `${r.status.toUpperCase()} · ${fmtLeave(r.hours)}${halfDayLabel(r) ? " · " + halfDayLabel(r) : ""}`,
         range,
         submitted ? `Requested: ${fmtDateShort(submitted)}` : null,
         (r.status === "approved" || r.status === "denied") && decided
@@ -498,7 +506,7 @@
       </tr></thead>
       <tbody>${reqs.map(r => {
         const u = usersByUid[r.uid];
-        const range = r.startDate === r.endDate ? fmtDay(r.startDate) : `${fmtDay(r.startDate)} → ${fmtDay(r.endDate)}`;
+        const range = (r.startDate === r.endDate ? fmtDay(r.startDate) : `${fmtDay(r.startDate)} → ${fmtDay(r.endDate)}`) + halfChip(r);
         const submitted = r.submittedAt?.toDate?.()?.toLocaleString("en-AU", { timeZone: "Australia/Melbourne", hour12: false }) || "—";
         const decided = r.decidedAt?.toDate?.()?.toLocaleString("en-AU", { timeZone: "Australia/Melbourne", hour12: false });
         const decidedTxt = decided
@@ -549,13 +557,14 @@
     el.classList.remove("empty");
     el.innerHTML = `<div class="empty">Loading…</div>`;
     try {
-      const [teSnap, lrSnap] = await Promise.all([
+      const [teSnap, lrSnap, adjSnap] = await Promise.all([
         getDocs(query(collection(db, "timeEntries"), where("uid", "==", uid))),
-        getDocs(query(collection(db, "leaveRequests"), where("uid", "==", uid), where("status", "==", "approved")))
+        getDocs(query(collection(db, "leaveRequests"), where("uid", "==", uid), where("status", "==", "approved"))),
+        getDocs(collection(db, "leaveLedger", uid, "entries"))
       ]);
       const timeEntries = []; teSnap.forEach(d => timeEntries.push(d.data()));
       const approved = []; lrSnap.forEach(d => approved.push(d.data()));
-      const { ledger, balance } = computeBalance(timeEntries, approved, usersByUid[uid]);
+      const { ledger, balance } = computeBalance(timeEntries, approved, usersByUid[uid], adjustmentsFromSnap(adjSnap));
 
       if (!ledger || ledger.length === 0) {
         el.classList.add("empty");
@@ -577,7 +586,8 @@
             ${ledger.map(ev => {
               const isOpening = ev.kind === "opening";
               const isLeave   = ev.kind === "leave";
-              const color = isLeave ? "color:#991B1B" : (isOpening ? "color:#1E40AF" : "color:#047857");
+              const isAdj     = ev.kind === "adjustment";
+              const color = isAdj ? "color:#6D28D9" : isLeave ? "color:#991B1B" : (isOpening ? "color:#1E40AF" : "color:#047857");
               const sign = ev.hours >= 0 ? "+" : "−";
               const amount = `${sign}${fmtLeave(Math.abs(ev.hours))}`;
               return `<tr>
@@ -599,6 +609,118 @@
     }
   }
   ledgerPick.addEventListener("change", loadLedger);
+
+  // ---- Half-day chip (which option the contractor picked) ----
+  function halfChip(r) {
+    const label = halfDayLabel(r);
+    return label
+      ? ` <span style="display:inline-block; font-size:10.5px; font-weight:700; color:#6D28D9; background:#EDE9FE; border:1px solid #DDD6FE; border-radius:999px; padding:1px 8px; margin-left:6px; white-space:nowrap">${label}</span>`
+      : "";
+  }
+
+  // ---- Adjust balance dialog (Option B: ± hours OR set exact target) ----
+  let balanceCache = {};
+  let adjustUid = null;
+
+  document.body.insertAdjacentHTML("beforeend", `
+    <div class="presence-backdrop" id="adjBackdrop" style="display:none">
+      <div class="presence-modal" style="max-width:470px">
+        <h3>Adjust leave balance — <span id="adjName"></span></h3>
+        <p style="margin-bottom:6px">Current balance: <b id="adjCurrent">—</b></p>
+        <label style="font-size:12px; margin-bottom:2px">Adjustment in hours (+ adds, − removes · 1 day = ${DAILY_HOURS}h)</label>
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:10px">
+          <input type="number" id="adjHours" step="0.1" placeholder="e.g. 7.6 or -3.8" style="max-width:140px">
+          <button class="ghost" data-quick="7.6">+1 day</button>
+          <button class="ghost" data-quick="-7.6">−1 day</button>
+          <button class="ghost" data-quick="3.8">+½ day</button>
+          <button class="ghost" data-quick="-3.8">−½ day</button>
+        </div>
+        <label style="font-size:12px; margin-bottom:2px">…or set the exact balance they should have (hours)</label>
+        <input type="number" id="adjTargetBal" step="0.1" placeholder="e.g. 40 — the ± is worked out for you" style="max-width:200px; margin-bottom:10px">
+        <label style="font-size:12px; margin-bottom:2px">Reason (required — shows in the history)</label>
+        <input type="text" id="adjReason" placeholder="e.g. Bonus day · Correction · Cash-out" style="margin-bottom:6px">
+        <p id="adjPreview" style="font-weight:600; color:#6D28D9; min-height:18px; margin-bottom:4px"></p>
+        <div class="row-btns">
+          <button class="ghost" id="adjCancel">Cancel</button>
+          <button id="adjSave">Save adjustment</button>
+        </div>
+      </div>
+    </div>`);
+
+  const adjBackdrop = document.getElementById("adjBackdrop");
+  const adjHours = document.getElementById("adjHours");
+  const adjTargetBal = document.getElementById("adjTargetBal");
+  const adjReason = document.getElementById("adjReason");
+
+  function adjDelta() {
+    if (adjTargetBal.value !== "") {
+      const target = Number(adjTargetBal.value);
+      if (isNaN(target)) return 0;
+      return target - (balanceCache[adjustUid]?.balance || 0);
+    }
+    return Number(adjHours.value) || 0;
+  }
+
+  function updateAdjPreview() {
+    adjHours.disabled = adjTargetBal.value !== "";
+    const delta = adjDelta();
+    const cur = balanceCache[adjustUid]?.balance || 0;
+    document.getElementById("adjPreview").textContent = delta
+      ? `Will record ${delta > 0 ? "+" : "−"}${fmtLeave(Math.abs(delta))} → new balance ${fmtLeave(cur + delta)}`
+      : "";
+  }
+
+  function openAdjust(uid) {
+    adjustUid = uid;
+    document.getElementById("adjName").textContent = balanceCache[uid]?.name || "?";
+    document.getElementById("adjCurrent").textContent = fmtLeave(balanceCache[uid]?.balance || 0);
+    adjHours.value = ""; adjTargetBal.value = ""; adjReason.value = "";
+    adjHours.disabled = false;
+    updateAdjPreview();
+    adjBackdrop.style.display = "flex";
+  }
+
+  adjHours.addEventListener("input", updateAdjPreview);
+  adjTargetBal.addEventListener("input", updateAdjPreview);
+  adjBackdrop.querySelectorAll("[data-quick]").forEach(b => b.addEventListener("click", () => {
+    adjTargetBal.value = "";
+    adjHours.value = b.dataset.quick;
+    updateAdjPreview();
+  }));
+  document.getElementById("adjCancel").addEventListener("click", () => { adjBackdrop.style.display = "none"; });
+
+  document.getElementById("adjSave").addEventListener("click", async () => {
+    if (!canWrite || !adjustUid) return;
+    const delta = Math.round(adjDelta() * 100) / 100;
+    const reason = adjReason.value.trim();
+    if (!delta) { alert("Enter an adjustment amount (or a target balance different from the current one)."); return; }
+    if (!reason) { alert("A reason is required — it shows in the accrual history."); return; }
+    const btn = document.getElementById("adjSave");
+    btn.disabled = true; btn.textContent = "Saving…";
+    try {
+      await addDoc(collection(db, "leaveLedger", adjustUid, "entries"), {
+        type: "adjustment",
+        hours: delta,
+        reason,
+        date: melDateKey(),
+        createdAt: serverTimestamp(),
+        createdBy: { uid: user.uid, name: profile.name || profile.email || "" }
+      });
+      logAudit({ profile, user }, {
+        action: "accrual.adjust",
+        targetType: "user",
+        targetUser: adjustUid,
+        after: { hours: delta },
+        note: `Leave balance adjusted ${delta > 0 ? "+" : ""}${delta}h — ${reason}`
+      });
+      adjBackdrop.style.display = "none";
+      loadBalances();
+      if (ledgerPick.value === adjustUid) loadLedger();
+    } catch (ex) {
+      alert("Failed: " + (ex.message || ex.code));
+    }
+    btn.disabled = false; btn.textContent = "Save adjustment";
+  });
 
   loadCalendar();
   startPendingLive();

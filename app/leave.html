@@ -164,7 +164,7 @@
   import { subscribeToComments, addLeaveComment, renderCommentsThread } from "../assets/leave-comments.js";
   import { logAudit } from "../assets/audit.js";
   import { fmtDay, melDateKey, fmtDateShort, fmtAU } from "../assets/time.js";
-  import { leaveHoursFor, computeBalance, fmtLeave, WEEKLY_ACCRUAL_HOURS } from "../assets/leave.js";
+  import { leaveHoursFor, computeBalance, fmtLeave, adjustmentsFromSnap, WEEKLY_ACCRUAL_HOURS } from "../assets/leave.js";
   import { renderCalendar } from "../assets/calendar.js";
   import { holidaysAsCalendarEntries, publicHolidaysInRange, holidayName } from "../assets/holidays.js";
   import {
@@ -187,9 +187,10 @@
   let openCommentsReq  = null;
 
   async function refresh() {
-    const [teSnap, lrSnap] = await Promise.all([
+    const [teSnap, lrSnap, adjSnap] = await Promise.all([
       getDocs(query(collection(db, "timeEntries"), where("uid", "==", user.uid))),
-      getDocs(query(collection(db, "leaveRequests"), where("uid", "==", user.uid)))
+      getDocs(query(collection(db, "leaveRequests"), where("uid", "==", user.uid))),
+      getDocs(collection(db, "leaveLedger", user.uid, "entries"))
     ]);
     const timeEntries = []; teSnap.forEach(d => timeEntries.push(d.data()));
     const approved = []; const allRequests = []; let pending = 0;
@@ -199,7 +200,7 @@
       if (r.status === "approved") approved.push(r);
       if (r.status === "pending") pending++;
     });
-    const { opening, accrued, taken, balance } = computeBalance(timeEntries, approved, profile);
+    const { opening, accrued, taken, adjusted, balance } = computeBalance(timeEntries, approved, profile, adjustmentsFromSnap(adjSnap));
 
     document.getElementById("kpiBalance").textContent = fmtLeave(balance);
     document.getElementById("kpiAccrued").textContent = fmtLeave(accrued);
@@ -215,6 +216,7 @@
         <li><span>Opening balance${accrualStartLabel}</span><span class="right">${fmtLeave(opening)}</span></li>
         <li><span>Accrued</span><span class="right">${fmtLeave(accrued)}</span></li>
         <li><span>Taken</span><span class="right">${fmtLeave(taken)}</span></li>
+        ${adjusted ? `<li><span>Adjustments</span><span class="right">${adjusted > 0 ? "+" : "−"}${fmtLeave(Math.abs(adjusted))}</span></li>` : ""}
         <li><span>Balance</span><span class="right">${fmtLeave(balance)}</span></li>
       </ul>`);
     const accrualStartStr = profile.accrualStartDate

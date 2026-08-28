@@ -135,7 +135,7 @@
   import { mountAnnouncementBanners } from "../assets/announcements.js";
   import { logAudit } from "../assets/audit.js";
   import { melClock, localClock, melDateKey, melTimeShort, fmtHours, fmtDay, fmtDateShort, parseMelTime, MEL_TZ } from "../assets/time.js";
-  import { computeBalance, fmtLeave } from "../assets/leave.js";
+  import { computeBalance, fmtLeave, adjustmentsFromSnap } from "../assets/leave.js";
   import {
     collection, query, where, getDocs, addDoc, doc, getDoc, updateDoc,
     serverTimestamp, Timestamp, arrayUnion, onSnapshot
@@ -455,9 +455,10 @@
   // LEAVE PREVIEW + STATS
   // ====================================================================
   async function refreshLeavePreview() {
-    const [teSnap, lrSnap] = await Promise.all([
+    const [teSnap, lrSnap, adjSnap] = await Promise.all([
       getDocs(query(collection(db, "timeEntries"), where("uid", "==", user.uid))),
-      getDocs(query(collection(db, "leaveRequests"), where("uid", "==", user.uid)))
+      getDocs(query(collection(db, "leaveRequests"), where("uid", "==", user.uid))),
+      getDocs(collection(db, "leaveLedger", user.uid, "entries"))
     ]);
     const timeEntries = []; teSnap.forEach(d => timeEntries.push(d.data()));
     const allRequests = []; const approved = []; const upcoming = []; let pending = 0;
@@ -474,7 +475,7 @@
         if (r.endDate >= todayKey) upcoming.push(r);
       }
     });
-    const { opening, accrued, taken, balance } = computeBalance(timeEntries, approved, profile);
+    const { opening, accrued, taken, adjusted, balance } = computeBalance(timeEntries, approved, profile, adjustmentsFromSnap(adjSnap));
     document.getElementById("statLeave").textContent = fmtLeave(balance);
     document.getElementById("statLeaveSub").textContent = `accrued ${fmtLeave(accrued)} · taken ${fmtLeave(taken)}`;
     document.getElementById("statPendingLeave").textContent = pending;
@@ -495,6 +496,7 @@
       <li><span>Opening balance${accrualStartLabel}</span><span class="right">${fmtLeave(opening)}</span></li>
       <li><span>Accrued</span><span class="right">${fmtLeave(accrued)}</span></li>
       <li><span>Taken</span><span class="right">${fmtLeave(taken)}</span></li>
+      ${adjusted ? `<li><span>Adjustments</span><span class="right">${adjusted > 0 ? "+" : "−"}${fmtLeave(Math.abs(adjusted))}</span></li>` : ""}
       <li><span>Balance</span><span class="right">${fmtLeave(balance)}</span></li>`;
     setTip("tipLeave", takenRows.length
       ? `<span class="head">Leave balance</span><ul>${summaryRows}</ul><span class="head" style="margin-top:8px">Recent leave</span><ul>${takenRows.join("")}</ul>`

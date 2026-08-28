@@ -48,14 +48,15 @@ export function leaveHoursFor(startKey, endKey, halfDayStart = false, halfDayEnd
   return Math.max(0, hours);
 }
 
-// Compute leave balance. Three-part model:
+// Compute leave balance. Four-part model:
 //   1. `openingBalanceDays` on the user — the days they walk in with (e.g. Jessie's 8.47).
 //   2. Weekly accrual from `accrualStartDate` onward: every COMPLETED Mon–Sun week in which the
 //      contractor logged any work adds `WEEKLY_ACCRUAL_HOURS` (~2.923h) to the balance.
 //      Weeks where they didn't work at all (e.g. on full-week leave) do NOT accrue.
 //   3. Approved leave requests subtract their `hours` from the balance.
-// Returns { opening, accrued, taken, balance, hoursWorked }.
-export function computeBalance(timeEntries, approvedLeaveRequests, user) {
+//   4. Manual admin adjustments (± hours from leaveLedger/{uid}/entries) add/subtract.
+// Returns { opening, accrued, taken, adjusted, balance, hoursWorked, ledger }.
+export function computeBalance(timeEntries, approvedLeaveRequests, user, adjustments = []) {
   const openingHours = ((user?.openingBalanceDays) || 0) * DAILY_HOURS;
   const accrualStart = user?.accrualStartDate || null;
 
@@ -136,6 +137,19 @@ export function computeBalance(timeEntries, approvedLeaveRequests, user) {
     }
   }
 
+  // Manual admin adjustments
+  let adjusted = 0;
+  for (const a of adjustments) {
+    if (!a || !a.hours) continue;
+    adjusted += a.hours;
+    ledger.push({
+      date: a.date || "—",
+      kind: "adjustment",
+      hours: a.hours,
+      note: `Adjustment — ${a.reason || "no reason given"}${a.by ? " · by " + a.by : ""}`
+    });
+  }
+
   ledger.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
   // Annotate running balance for the UI
   let running = 0;
@@ -150,17 +164,43 @@ export function computeBalance(timeEntries, approvedLeaveRequests, user) {
   let taken = 0;
   for (const r of approvedLeaveRequests) if (r.hours) taken += r.hours;
 
-  const balance = openingHours + accrued - taken;
+  const balance = openingHours + accrued + adjusted - taken;
 
   return {
     opening: openingHours,
     accrued,
     taken,
+    adjusted,
     balance,
     hoursWorked,
     rawBalance: balance,
     ledger
   };
+}
+
+// Map a leaveLedger/{uid}/entries snapshot to the adjustments array computeBalance expects.
+export function adjustmentsFromSnap(snap) {
+  const out = [];
+  snap.forEach(d => {
+    const a = d.data();
+    if (a.type !== "adjustment" || !a.hours) return;
+    out.push({ date: a.date || "—", hours: a.hours, reason: a.reason || "", by: a.createdBy?.name || "" });
+  });
+  return out;
+}
+
+// Short badge text for a request's half-day selection, or "" if full days.
+// Single day: which toggle the contractor picked. Range: which end(s) are half.
+export function halfDayLabel(r) {
+  if (!r?.halfDayStart && !r?.halfDayEnd) return "";
+  if (r.startDate === r.endDate) {
+    if (r.halfDayStart && r.halfDayEnd) return "½ day";
+    return r.halfDayStart ? "½ day · start of day" : "½ day · end of day";
+  }
+  const parts = [];
+  if (r.halfDayStart) parts.push("first");
+  if (r.halfDayEnd) parts.push("last");
+  return `½ ${parts.join(" & ")} day`;
 }
 
 // "12d 4h" style formatting using a 7.6-hour day.
