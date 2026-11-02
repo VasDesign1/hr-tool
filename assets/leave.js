@@ -208,7 +208,10 @@ export function fmtLeave(hours) {
   if (hours == null || isNaN(hours)) return "—";
   if (hours < 0) return "-" + fmtLeave(-hours);
   if (hours < 0.05) return "0d";
-  const days = Math.floor(hours / DAILY_HOURS);
+  // Round to 0.1h first: 3 × 7.6 is 22.799999999999997 in floating point,
+  // which would otherwise floor to "2d 7.6h" instead of "3d".
+  hours = Math.round(hours * 10) / 10;
+  const days = Math.floor(hours / DAILY_HOURS + 1e-9);
   const remH = hours - days * DAILY_HOURS;
   const remHRound = Math.round(remH * 10) / 10;
   if (days === 0) return `${remHRound}h`;

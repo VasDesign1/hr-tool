@@ -2,6 +2,7 @@
 // State is kept on the container element via dataset.
 
 import { melDateKey } from "./time.js";
+import { isPublicHoliday } from "./holidays.js";
 
 const MONTHS = ["January","February","March","April","May","June",
                 "July","August","September","October","November","December"];
@@ -22,24 +23,30 @@ export function renderCalendar(container, opts) {
   const state = container._calState;
   const { entries = [], onClickDay, onClickEntry } = opts;
 
-  // Group entries by date for fast lookup, expanding multi-day to each weekday
+  // Group entries by date for fast lookup. Leave requests are only drawn on
+  // working days (Mon-Fri, not a Vic public holiday) — weekends and holidays
+  // are never charged, so they must not look like the contractor is off.
+  // Holiday entries themselves draw on their own date regardless.
   const byDate = {};
   for (const e of entries) {
     let cur = parseKey(e.startDate);
     const end = parseKey(e.endDate);
-    let pos = 0;
-    const dayCount = daysBetween(e.startDate, e.endDate);
+    const keys = [];
     while (cur <= end) {
       const key = toKey(cur);
+      const dow = cur.getUTCDay();
+      const working = dow >= 1 && dow <= 5 && !isPublicHoliday(key);
+      if (e.isHoliday || working) keys.push(key);
+      cur = new Date(cur.getTime() + 86_400_000);
+    }
+    keys.forEach((key, i) => {
       (byDate[key] ||= []).push({
         ...e,
-        partOfRange: dayCount > 1,
-        isFirst: pos === 0,
-        isLast: cur.getTime() === end.getTime()
+        partOfRange: keys.length > 1,
+        isFirst: i === 0,
+        isLast: i === keys.length - 1
       });
-      cur = new Date(cur.getTime() + 86_400_000);
-      pos++;
-    }
+    });
   }
 
   // First day of grid: Monday on/before the 1st
@@ -156,11 +163,6 @@ function parseKey(key) {
 }
 function toKey(date) {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth()+1).padStart(2,"0")}-${String(date.getUTCDate()).padStart(2,"0")}`;
-}
-function daysBetween(startKey, endKey) {
-  const s = parseKey(startKey).getTime();
-  const e = parseKey(endKey).getTime();
-  return Math.round((e - s) / 86_400_000) + 1;
 }
 function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
