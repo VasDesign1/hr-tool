@@ -21,7 +21,18 @@ export function renderCalendar(container, opts) {
   if (opts.month != null) container._calState.month = opts.month;
 
   const state = container._calState;
-  const { entries = [], onClickDay, onClickEntry } = opts;
+  const { entries = [], onClickDay, onClickEntry, allowSpan = false } = opts;
+
+  // Optional 2-month view (admin only — the page opts in via `allowSpan`).
+  // Preference is remembered per browser.
+  const SPAN_KEY = "hrtool.calSpan";
+  let span = 1;
+  if (allowSpan) {
+    try { span = localStorage.getItem(SPAN_KEY) === "2" ? 2 : 1; } catch { span = 1; }
+  }
+  const lastMonthIdx = state.month + span - 1;              // may be 12 → next year
+  const lastYear  = state.year + Math.floor(lastMonthIdx / 12);
+  const lastMonth = lastMonthIdx % 12;
 
   // Group entries by date for fast lookup. Leave requests are only drawn on
   // working days (Mon-Fri, not a Vic public holiday) — weekends and holidays
@@ -49,17 +60,32 @@ export function renderCalendar(container, opts) {
     });
   }
 
-  // First day of grid: Monday on/before the 1st
+  // First day of grid: Monday on/before the 1st of the first month.
+  // Single month: fixed 6 rows (42 cells). Two months: Monday before the 1st
+  // through the Sunday on/after the last day of the second month.
   const first = new Date(Date.UTC(state.year, state.month, 1));
   const dow = (first.getUTCDay() + 6) % 7; // Mon=0
   const gridStart = new Date(first.getTime() - dow * 86_400_000);
+  let cellCount = 42;
+  if (span > 1) {
+    const last = new Date(Date.UTC(lastYear, lastMonth + 1, 0));
+    const lastDow = (last.getUTCDay() + 6) % 7;
+    const gridEnd = new Date(last.getTime() + (6 - lastDow) * 86_400_000);
+    cellCount = Math.round((gridEnd.getTime() - gridStart.getTime()) / 86_400_000) + 1;
+  }
+  const firstKey = toKey(first);
+  const lastKey  = toKey(new Date(Date.UTC(lastYear, lastMonth + 1, 0)));
 
   const todayKey = melDateKey();
   const cells = [];
-  for (let i = 0; i < 42; i++) {
+  for (let i = 0; i < cellCount; i++) {
     const d = new Date(gridStart.getTime() + i * 86_400_000);
     const key = toKey(d);
-    const inMonth = d.getUTCMonth() === state.month;
+    const inMonth = key >= firstKey && key <= lastKey;
+    // In the 2-month view, label the 1st of each month so the boundary is visible.
+    const numLabel = (span > 1 && inMonth && d.getUTCDate() === 1)
+      ? `1 ${MONTHS[d.getUTCMonth()].slice(0, 3)}`
+      : String(d.getUTCDate());
     const isWeekend = d.getUTCDay() === 0 || d.getUTCDay() === 6;
     const isToday = key === todayKey;
     const dayEntries = byDate[key] || [];
@@ -72,16 +98,23 @@ export function renderCalendar(container, opts) {
     cells.push(`
       <div class="cal-day ${inMonth ? "" : "other"} ${isWeekend ? "weekend" : ""} ${isToday ? "today" : ""}"
            data-date="${key}">
-        <div class="cal-num">${d.getUTCDate()}</div>
+        <div class="cal-num">${numLabel}</div>
         <div class="cal-entries">${entriesHtml}</div>
       </div>
     `);
   }
 
+  const title = span > 1
+    ? `${MONTHS[state.month]} ${state.year} – ${MONTHS[lastMonth]} ${lastYear}`
+    : `${MONTHS[state.month]} ${state.year}`;
+  const spanBtn = allowSpan
+    ? `<button class="ghost cal-nav" data-cal-span title="${span > 1 ? "Show one month" : "Show two months back to back"}">${span > 1 ? "1 month" : "2 months"}</button>`
+    : "";
   container.innerHTML = `
     <div class="cal-header">
       <button class="ghost cal-nav" data-cal-prev>‹</button>
-      <div class="cal-title">${MONTHS[state.month]} ${state.year}</div>
+      <div class="cal-title">${title}</div>
+      ${spanBtn}
       <button class="ghost cal-nav" data-cal-today>Today</button>
       <button class="ghost cal-nav" data-cal-next>›</button>
     </div>
@@ -97,6 +130,10 @@ export function renderCalendar(container, opts) {
   container.querySelector("[data-cal-next]").addEventListener("click", () => {
     const s = container._calState;
     if (s.month === 11) { s.month = 0; s.year++; } else s.month++;
+    renderCalendar(container, opts);
+  });
+  container.querySelector("[data-cal-span]")?.addEventListener("click", () => {
+    try { localStorage.setItem(SPAN_KEY, span > 1 ? "1" : "2"); } catch {}
     renderCalendar(container, opts);
   });
   container.querySelector("[data-cal-today]").addEventListener("click", () => {

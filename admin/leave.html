@@ -470,6 +470,7 @@
     const allEntries = [...holidaysAsCalendarEntries(), ...entries];
     renderCalendar(document.getElementById("teamCalendar"), {
       entries: allEntries,
+      allowSpan: true, // admin-only 2-month toggle
       onClickEntry: (entry) => {
         if (entry.isHoliday) return;
         openReview(entry.id, entry.full);
